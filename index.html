@@ -441,38 +441,147 @@ function isHanging(c, sq) {
   var low = Math.min.apply(null, att.map(function (a) { return VAL[c.get(a).type]; }));
   return low < VAL[p.type];
 }
-// What a move achieves, as short verb phrases.
+// The same position with the other side to move, so we can ask what the mover could do next.
+function flipTurn(c) {
+  if (c.isCheck()) return null;
+  var p = c.fen().split(' '); p[1] = p[1] === 'w' ? 'b' : 'w'; p[3] = '-';
+  try { return new Chess(p.join(' ')); } catch (e) { return null; }
+}
+function canCastle(c, color) {
+  var k = null;
+  c.board().forEach(function (row) { row.forEach(function (p) { if (p && p.type === 'k' && p.color === color) k = p.square; }); });
+  if (!k) return false;
+  return c.moves({ square: k, verbose: true }).some(function (x) { return x.flags.indexOf('k') >= 0 || x.flags.indexOf('q') >= 0; });
+}
+function rooksConnected(c, color) {
+  var rank = color === 'w' ? '1' : '8', files = [];
+  'abcdefgh'.split('').forEach(function (f) { var p = c.get(f + rank); if (p && p.type === 'r' && p.color === color) files.push(f.charCodeAt(0)); });
+  if (files.length !== 2) return false;
+  for (var x = files[0] + 1; x < files[1]; x++) if (c.get(String.fromCharCode(x) + rank)) return false;
+  return true;
+}
+function listSquares(a) { return a.length === 1 ? a[0] : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; }
+// If the move that led to this position captured something, which piece was lost on that square.
+function justLostAt(fen, sq) {
+  var h = S.game.history({ verbose: true });
+  for (var i = h.length - 1; i >= 0; i--) if (h[i].after === fen) return h[i].captured && h[i].to === sq ? h[i].captured : null;
+  return null;
+}
+// What a move achieves, as short verb phrases, most important first (at most three).
 function describe(fen, u, replyUci) {
   var r = tryMove(fen, u); if (!r) return [];
-  var m = r.move, after = r.chess, before = new Chess(fen), out = [];
+  var m = r.move, after = r.chess, before = new Chess(fen), out = [], me = m.color, them = other(me);
   if (after.isCheckmate()) return ['is checkmate'];
-  if (m.flags.indexOf('k') >= 0 || m.flags.indexOf('q') >= 0) out.push('castles, which tucks the king away and brings a rook into play');
+  var castled = m.flags.indexOf('k') >= 0 || m.flags.indexOf('q') >= 0;
+  if (castled) out.push('castles, which tucks the king away and brings a rook into play');
   if (m.promotion) out.push('promotes the pawn to a ' + NAME[m.promotion]);
   if (m.captured) {
     var recapture = replyUci && replyUci.slice(2, 4) === m.to;
-    var gain = VAL[m.captured], give = VAL[m.piece];
-    if (replyUci === undefined) out.push('takes the ' + NAME[m.captured] + ' on ' + m.to);
+    var gain = VAL[m.captured], give = VAL[m.piece], lost = justLostAt(fen, m.to);
+    if (lost) {
+      // Taking back a piece that was captured on this square the move before.
+      if (VAL[lost] === gain) out.push('takes back on ' + m.to + ', completing an even trade of ' + NAME[lost] + ' for ' + NAME[m.captured]);
+      else if (gain > VAL[lost]) out.push('takes back on ' + m.to + ' and comes out ahead: a ' + NAME[m.captured] + ' (' + gain + ') for the ' + NAME[lost] + ' (' + VAL[lost] + ') just lost');
+      else out.push('takes back on ' + m.to + ', getting a ' + NAME[m.captured] + ' (' + gain + ') for the ' + NAME[lost] + ' (' + VAL[lost] + ') just lost');
+    }
+    else if (replyUci === undefined) out.push('takes the ' + NAME[m.captured] + ' on ' + m.to);
     else if (!recapture) out.push('wins the ' + NAME[m.captured] + ' on ' + m.to + ' for free');
     else if (gain > give) out.push('wins material, giving a ' + NAME[m.piece] + ' (' + give + ') for a ' + NAME[m.captured] + ' (' + gain + ')');
     else if (gain === give) out.push('trades ' + NAME[m.piece] + ' for ' + NAME[m.captured] + ', an even swap');
     else out.push('takes the ' + NAME[m.captured] + ' on ' + m.to);
   }
+  if (before.isCheck() && !m.captured) out.push(m.piece === 'k' ? 'moves the king out of check' : 'blocks the check');
   if (after.isCheck()) out.push('puts the king in check');
-  if (m.piece !== 'p' && m.piece !== 'k' && isHanging(before, m.from) && !isHanging(after, m.to)) out.push('moves the ' + NAME[m.piece] + ' out of danger');
-  var home = m.color === 'w' ? '1' : '8';
-  if ((m.piece === 'n' || m.piece === 'b') && m.from[1] === home && before.moveNumber() <= 15) out.push('brings the ' + NAME[m.piece] + ' into the game');
-  if (m.piece === 'p' && ['d4', 'e4', 'd5', 'e5'].indexOf(m.to) >= 0 && !m.captured) out.push('claims space in the center');
-  if (!isHanging(after, m.to)) {
+  var escaped = m.piece !== 'p' && m.piece !== 'k' && isHanging(before, m.from) && !isHanging(after, m.to);
+  if (escaped) out.push('moves the ' + NAME[m.piece] + ' out of danger');
+  var home = me === 'w' ? '1' : '8';
+  var developed = (m.piece === 'n' || m.piece === 'b') && m.from[1] === home && before.moveNumber() <= 15;
+  if (developed) out.push('brings the ' + NAME[m.piece] + ' off the back row and into play');
+  var centerPawn = m.piece === 'p' && ['d4', 'e4', 'd5', 'e5'].indexOf(m.to) >= 0 && !m.captured;
+  if (centerPawn) out.push('puts a pawn in the center, taking space away from the other side');
+
+  // A piece that could have been taken for free before, and is now safe.
+  var saved = null;
+  before.board().forEach(function (row) { row.forEach(function (p) {
+    if (!p || p.color !== me || p.type === 'k' || p.square === m.from) return;
+    if (isHanging(before, p.square) && after.get(p.square) && !isHanging(after, p.square) && (!saved || VAL[p.type] > VAL[saved.type])) saved = p;
+  }); });
+  if (saved) out.push('protects the ' + NAME[saved.type] + ' on ' + saved.square + ', which could have been taken');
+
+  var safeThere = !isHanging(after, m.to);
+  if (safeThere) {
     var bestT = null;
     after.board().forEach(function (row) { row.forEach(function (p) {
-      if (!p || p.color === m.color || p.type === 'k') return;
-      if (after.attackers(p.square, m.color).indexOf(m.to) < 0) return;
+      if (!p || p.color === me || p.type === 'k') return;
+      if (after.attackers(p.square, me).indexOf(m.to) < 0) return;
       var loose = after.attackers(p.square, p.color).length === 0;
       if ((VAL[p.type] > VAL[m.piece] || (loose && p.type !== 'p')) && (!bestT || VAL[p.type] > VAL[bestT.type])) bestT = p;
     }); });
     if (bestT && !after.isCheck()) out.push('attacks the ' + NAME[bestT.type] + ' on ' + bestT.square);
   }
-  return out;
+
+  // Quieter gains. These need the position with the mover to play again.
+  var next = flipTurn(after), quiet = [];
+  if (next) {
+    var mates = next.moves().filter(function (s) { return s.slice(-1) === '#'; });
+    if (mates.length) out.push('threatens checkmate next move with ' + mates[0]);
+    if (!castled && !canCastle(before, me) && canCastle(next, me)) quiet.push('clears the last square needed to castle');
+    // Lines opened for another long-range piece.
+    var opened = null;
+    before.board().forEach(function (row) { row.forEach(function (p) {
+      if (!p || p.color !== me || p.square === m.from || 'brq'.indexOf(p.type) < 0 || !next.get(p.square)) return;
+      var gainSq = next.moves({ square: p.square }).length - before.moves({ square: p.square }).length;
+      if (gainSq >= 3 && (!opened || gainSq > opened.gain)) opened = { p: p, gain: gainSq };
+    }); });
+    if (opened) quiet.push('opens a line for the ' + NAME[opened.p.type] + ' on ' + opened.p.square + ', which gains ' + opened.gain + ' squares to move to');
+    if (!rooksConnected(before, me) && rooksConnected(next, me)) quiet.push('connects the rooks, so they protect each other along the back row');
+  }
+  if (m.piece === 'r' && m.from[0] !== m.to[0]) {
+    var ownP = 0, theirP = 0;
+    for (var rk = 1; rk <= 8; rk++) { var q = after.get(m.to[0] + rk); if (q && q.type === 'p') { if (q.color === me) ownP++; else theirP++; } }
+    if (!ownP && !theirP) quiet.push('puts the rook on an open file, where no pawns block it');
+    else if (!ownP) quiet.push('puts the rook on a file with no pawn of its own in the way');
+  }
+  if (m.piece !== 'p' && m.piece !== 'k' && safeThere) {
+    var ctr = ['d4', 'e4', 'd5', 'e5'].filter(function (s) {
+      return s !== m.to && after.attackers(s, me).indexOf(m.to) >= 0 && before.attackers(s, me).indexOf(m.from) < 0;
+    });
+    if (ctr.length) quiet.push('aims the ' + NAME[m.piece] + ' at the center (' + listSquares(ctr) + ')');
+  }
+  // A friendly piece under attack that this move now also guards.
+  var backed = null;
+  after.board().forEach(function (row) { row.forEach(function (p) {
+    if (!p || p.color !== me || p.type === 'k' || p.square === m.to || (saved && p.square === saved.square)) return;
+    if (after.attackers(p.square, me).indexOf(m.to) < 0 || before.attackers(p.square, me).indexOf(m.from) >= 0) return;
+    if (m.piece !== 'p' && after.attackers(p.square, them).length === 0) return;
+    if (!backed || VAL[p.type] > VAL[backed.type]) backed = p;
+  }); });
+  if (backed) quiet.push('adds a defender to the ' + NAME[backed.type] + ' on ' + backed.square);
+  if (m.piece === 'p') {
+    var dir = me === 'w' ? 1 : -1, rel = me === 'w' ? +m.to[1] : 9 - +m.to[1], passed = rel >= 5;
+    if (passed) {
+      for (var df = -1; df <= 1 && passed; df++) {
+        var fc = m.to.charCodeAt(0) + df; if (fc < 97 || fc > 104) continue;
+        for (var y = +m.to[1] + dir; y >= 1 && y <= 8; y += dir) { var e = after.get(String.fromCharCode(fc) + y); if (e && e.type === 'p' && e.color === them) { passed = false; break; } }
+      }
+    }
+    if (passed) quiet.push('pushes a pawn that no enemy pawn can stop, ' + (8 - rel) + (8 - rel === 1 ? ' step' : ' steps') + ' from becoming a queen');
+    var kingSq = null;
+    after.board().forEach(function (row) { row.forEach(function (p) { if (p && p.type === 'k' && p.color === me) kingSq = p.square; }); });
+    if (kingSq && kingSq[1] === home && m.from[1] === (me === 'w' ? '2' : '7') && Math.abs(kingSq.charCodeAt(0) - m.from.charCodeAt(0)) <= 1 && before.moveNumber() > 8 && 'abgh'.indexOf(m.from[0]) >= 0)
+      quiet.push('gives the king an escape square, so a check along the back row is not checkmate');
+  }
+  if (next && m.piece !== 'p' && m.piece !== 'k' && !developed && !escaped && safeThere) {
+    var was = before.moves({ square: m.from }).length, now = next.moves({ square: m.to }).length;
+    if (now - was >= 3) quiet.push('gives the ' + NAME[m.piece] + ' more reach (' + now + ' squares to move to, up from ' + was + ')');
+  }
+  out = out.concat(quiet);
+  // Nothing specific: say what changed in plain numbers.
+  if (!out.length && next) {
+    var allWas = before.moves().length, allNow = next.moves().length;
+    if (allNow - allWas >= 3) out.push('gives the pieces more room (' + allNow + ' possible moves next turn, up from ' + allWas + ')');
+  }
+  return out.slice(0, 3);
 }
 // A move's notation spelled out, e.g. Nxe5+ -> "knight takes pawn on e5, check".
 function moveWords(m) {
@@ -518,7 +627,7 @@ function judge(fen, playedUci, an, canTakeBack) {
   var named = 'You played ' + fb.playedSan + ' (' + moveWords(playedMv.move) + '). ';
   if (grade === 'best' || grade === 'good') {
     fb.title = grade === 'best' ? 'Best move' : 'Good move';
-    fb.text = named + (sentence(did, 'It') || 'A calm move that keeps your position healthy.');
+    fb.text = named + (sentence(did, 'It') || 'It is a safe waiting move: every piece stays protected and nothing is given away, but it creates no new threat.');
     if (grade === 'best') fb.extra = 'That is the move I would have picked.';
     return fb;
   }
@@ -554,7 +663,7 @@ function judge(fen, playedUci, an, canTakeBack) {
     if (cap(m.score) - cap(played.score) < Math.max(25, loss * 0.4)) return;
     var r = tryMove(fen, m.uci); if (!r) return;
     var d = describe(fen, m.uci, m.reply);
-    opts.push({ uci: m.uci, text: r.move.san + ' (' + moveWords(r.move) + '): ' + (d.length ? d.join(', ') : 'improves your position without giving anything away') + '.' });
+    opts.push({ uci: m.uci, text: r.move.san + ' (' + moveWords(r.move) + '): ' + (d.length ? d.join(', ') : 'a safe waiting move that keeps every piece protected') + '.' });
   });
   fb.options = opts;
   fb.title = grade === 'ok' ? 'Playable, but there was better' : grade === 'inaccuracy' ? 'Okay, but there was better' : grade === 'blunder' ? 'That one costs a lot' : 'That one costs you';
@@ -631,7 +740,7 @@ function onHint() {
       S.hintStage = 2; S.hintSquares = [r.move.from, r.move.to]; S.revealed[fen + '|' + mv.uci] = true;
       var d = describe(fen, mv.uci, mv.reply), extra = '';
       if (mv.reply) { var rep = tryMove(r.chess.fen(), mv.reply); if (rep) extra = 'I expect the reply ' + rep.move.san + '.'; }
-      showCoach('Try ' + r.move.san, r.move.san + ' means ' + moveWords(r.move) + '. ' + (sentence(d, 'It') || 'It improves your position without giving anything away.'), extra);
+      showCoach('Try ' + r.move.san, r.move.san + ' means ' + moveWords(r.move) + '. ' + (sentence(d, 'It') || 'It is a safe waiting move: every piece stays protected and nothing is given away, but it creates no new threat.'), extra);
       S.feedback = { fen: fen, played: mv.uci, playedSan: r.move.san, best: an.moves[0].uci, bestSan: tryMove(fen, an.moves[0].uci).move.san, an: an, hint: true };
       $('btn-explain').hidden = !sampleFn;
       $('btn-hint').textContent = 'Nudge';
@@ -656,7 +765,7 @@ function touchSuggest(sq) {
     if (good) {
       var extra = '';
       if (m.reply) { var rep = tryMove(r.chess.fen(), m.reply); if (rep) extra = 'I expect the reply ' + rep.move.san + ' (' + moveWords(rep.move) + ').'; }
-      showCoach('Try ' + san, means + (sentence(d, 'It') || 'It improves your position without giving anything away.'), extra);
+      showCoach('Try ' + san, means + (sentence(d, 'It') || 'It is a safe waiting move: every piece stays protected and nothing is given away, but it creates no new threat.'), extra);
       S.hintSquares = [r.move.to]; S.revealed[fen + '|' + m.uci] = true;
     } else if (loss >= lerp(220, 100, t)) {
       showCoach('Leave this ' + NAME[p.type] + ' for now', 'Its best move is ' + san + ' (' + moveWords(r.move) + '), and that gives something away. Another piece has a stronger move.');
@@ -705,7 +814,7 @@ function explainOpponent() {
   var info = S.mode === 'cpu' && S.lastCpu && S.lastCpu.ply === hist.length ? S.lastCpu : null;
   var who = S.mode === 'cpu' ? 'The computer' : 'Your opponent';
   var d = describe(last.before, u, info ? info.reply : undefined);
-  var text = who + ' played ' + last.san + ' (' + moveWords(last) + '). ' + (sentence(d, 'It') || 'It is a quiet move with no immediate threat.');
+  var text = who + ' played ' + last.san + ' (' + moveWords(last) + '). ' + (sentence(d, 'It') || 'It is a safe waiting move: every piece stays protected and nothing is given away, but it creates no new threat.');
   var extra = '';
   if (info && info.full) extra = 'This was a coach-strength reply, because you played my suggested move.';
   else if (info && info.loss >= 150) extra = 'It was not a good move, though. At level ' + S.level.toFixed(1) + ' the computer makes mistakes like this on purpose, and this one gives you a chance. Look for it, or tap Nudge.';
@@ -727,7 +836,7 @@ function explainOpponent() {
       var v = loss >= 150 ? 'It was a mistake, and it gives you a chance. Look for it, or tap Nudge.'
         : loss >= 60 ? 'There was something a little better, so you have not lost any ground.'
         : 'It was one of the best moves available.';
-      showCoach(title, who + ' played ' + last.san + ' (' + moveWords(last) + '). ' + (sentence(d2, 'It') || 'It is a quiet move with no immediate threat.'), v);
+      showCoach(title, who + ' played ' + last.san + ' (' + moveWords(last) + '). ' + (sentence(d2, 'It') || 'It is a safe waiting move: every piece stays protected and nothing is given away, but it creates no new threat.'), v);
       S.feedback = { fen: last.before, played: u, playedSan: last.san, best: an.moves[0].uci, bestSan: tryMove(last.before, an.moves[0].uci).move.san, an: an, opp: true };
       $('btn-explain').hidden = !sampleFn; $('btn-whynot').hidden = false;
     });
@@ -831,7 +940,7 @@ function answerWhyNot(W, altUci) {
     var san = r.move.san, who = sideNames(W.last.color);
     if (altUci === W.u) { showCoach('That is the move that was played', san + ' is the move ' + who.mover.toLowerCase() + ' chose here.'); $('btn-whynot').hidden = false; return; }
     var cap = function (x) { return clamp(x, -1500, 1500); }, diff = cap(alt.score) - cap(played.score);
-    var d = describe(before, altUci, alt.reply), does = sentence(d, 'It') || 'It is a quiet move with no immediate threat.';
+    var d = describe(before, altUci, alt.reply), does = sentence(d, 'It') || 'It is a safe waiting move: every piece stays protected and nothing is given away, but it creates no new threat.';
     var rep = alt.reply ? tryMove(r.chess.fen(), alt.reply) : null;
     var text = san + ' means ' + moveWords(r.move) + '. ', extra = '';
     if (diff <= -150) {
