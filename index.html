@@ -45,7 +45,8 @@ body { background: var(--bg); color: var(--ink); font-family: var(--font-body); 
 button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
-.wrap { max-width: 980px; margin: 0 auto; padding: 14px 12px 40px; display: flex; flex-direction: column; gap: 12px; }
+.wrap { position: relative; max-width: 980px; margin: 0 auto; padding: 16px 12px 40px; display: flex; flex-direction: column; gap: 12px; }
+.build { position: absolute; top: 2px; right: 12px; font: 700 11px/1 var(--font-body); color: var(--muted); letter-spacing: .04em; font-variant-numeric: tabular-nums; }
 header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
 h1 { font-family: var(--font-display); font-weight: 800; font-size: 1.6rem; margin: 0; letter-spacing: -0.01em; }
 .tabs { display: flex; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
@@ -125,6 +126,7 @@ input.code { border: 1.5px solid var(--ink); background: var(--surface); border-
 </head>
 <body>
 <div class="wrap">
+  <span class="build" id="build" title="Build number"></span>
   <header>
     <h1>Chess Coach</h1>
     <div class="tabs" role="tablist" aria-label="Opponent">
@@ -226,6 +228,7 @@ var GLYPH = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
 var NAME = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
 var VAL = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
 var MATE = 100000;
+var BUILD = 'b15';   // raise by one with every release
 
 /* ---------- small helpers ---------- */
 var store = {
@@ -874,9 +877,11 @@ function enterReview(k) {
   if (!S.anCache[last.before]) S.anCache[last.before] = info ? Promise.resolve(info.an) : analyze(last.before, { maxDepth: 4, timeMs: 1000 });
   S.selected = null; S.targets = []; S.hintSquares = []; S.hintStage = 0;
   S.whyNot = { ply: n, k: k, last: last, u: u, info: info, view: v, sel: null, anP: S.anCache[last.before] };
-  showCoach('Before ' + moveLabel(k, last.san), 'Next came ' + last.san + ' (' + moveWords(last) + '). To ask why a different move was not played, tap a ' + colorName(last.color) + ' piece and then the square.');
+  showCoach('Before ' + moveLabel(k, last.san), 'Next came ' + last.san + ' (' + moveWords(last) + '). Checking how good that move was.');
   $('btn-whynot').hidden = false; $('btn-takeback').hidden = true; $('btn-explain').hidden = true;
   render();
+  var W = S.whyNot;
+  W.anP.then(function (an) { showReviewVerdict(W, an); });
 }
 // Continue the real game from the position being looked at. Later moves are dropped.
 function startHere() {
@@ -895,6 +900,72 @@ function startHere() {
   render();
   if (!mine) cpuMove(); else ensurePre();
   saveGame();
+}
+// Extra detail for a move looked at again: what it left loose, and what it cost in material.
+function materialOf(c, color) {
+  var t = 0; c.board().forEach(function (row) { row.forEach(function (p) { if (p && p.color === color && p.type !== 'k') t += VAL[p.type]; }); });
+  return t;
+}
+function balanceAfter(fen, u, reply, me) {
+  var r = tryMove(fen, u); if (!r) return null;
+  var c = r.chess; if (reply) { var r2 = tryMove(c.fen(), reply); if (r2) c = r2.chess; }
+  return materialOf(c, me) - materialOf(c, other(me));
+}
+function balanceWords(d) { return d === 0 ? 'level' : Math.abs(d) + (Math.abs(d) === 1 ? ' point ' : ' points ') + (d > 0 ? 'ahead' : 'behind'); }
+function moreDetail(fen, u, an, mine, already) {
+  var played = null, best = an.moves[0]; an.moves.forEach(function (m) { if (m.uci === u) played = m; });
+  var r = tryMove(fen, u); if (!r || !played) return '';
+  var me = r.move.color, out = [], whose = mine ? 'your ' : 'the ', subj = mine ? 'you are ' : colorName(me) + ' is ', subj2 = mine ? 'you would be ' : colorName(me) + ' would be ';
+  var loose = [];
+  r.chess.board().forEach(function (row) { row.forEach(function (p) { if (p && p.color === me && p.type !== 'k' && isHanging(r.chess, p.square)) loose.push(p); }); });
+  loose = loose.filter(function (p) { return !already || already.indexOf(' on ' + p.square) < 0; });
+  loose.sort(function (a, b) { return VAL[b.type] - VAL[a.type]; });
+  if (loose.length) out.push('After it, ' + listSquares(loose.slice(0, 3).map(function (p) { return whose + NAME[p.type] + ' on ' + p.square; })) + (loose.length === 1 ? ' is' : ' are') + ' open to capture.');
+  if (played.score > -(MATE - 50) && best.score < MATE - 50 && best.uci !== u) {
+    var a = balanceAfter(fen, u, played.reply, me), b = balanceAfter(fen, best.uci, best.reply, me);
+    var rep = played.reply ? tryMove(r.chess.fen(), played.reply) : null, bm = tryMove(fen, best.uci);
+    if (a !== null && b !== null && a < b && rep && bm)
+      out.push('Once the reply ' + rep.move.san + ' is played, ' + subj + balanceWords(a) + ' in material. After ' + bm.move.san + ' and its best reply, ' + subj2 + balanceWords(b) + '.');
+  }
+  return out.join(' ');
+}
+// The coach's verdict on the move that was played from the position being looked at.
+function showReviewVerdict(W, an) {
+  if (S.whyNot !== W || !an || !an.moves.length) return;
+  var fen = W.last.before, who = sideNames(W.last.color), mine = who.isMe || S.mode === 'local';
+  var label = moveLabel(W.k, W.last.san), ask = 'To ask about a different move here, tap a ' + colorName(W.last.color) + ' piece and then the square.';
+  if (mine) {
+    var fb = judge(fen, W.u, an, false); if (!fb) return;
+    if (fb.grade !== 'best' && fb.grade !== 'good') { var more = moreDetail(fen, W.u, an, who.isMe, fb.text); if (more) fb.text += ' ' + more; }
+    if (S.mode === 'local') {
+      var meN = colorName(W.last.color), themN = colorName(other(W.last.color));
+      fb.text = fb.text.replace(/^You played/, meN + ' played').replace(/[Yy]our opponent/g, themN).replace(/You had/g, meN + ' had')
+        .replace(/checkmate you/g, 'give checkmate').replace(/ your position/g, ' the position').replace(/ your /g, ' the ');
+    }
+    fb.title = label + ': ' + fb.title.charAt(0).toLowerCase() + fb.title.slice(1);
+    fb.after = ask; fb.canTakeBack = false;
+    showFeedback(fb);
+  } else {
+    var played = null; an.moves.forEach(function (m) { if (m.uci === W.u) played = m; });
+    if (!played) return;
+    var loss = clamp(an.moves[0].score, -1500, 1500) - clamp(played.score, -1500, 1500);
+    var d = describe(fen, W.u, played.reply), r = tryMove(fen, W.u);
+    var text = who.mover + ' played ' + W.last.san + ' (' + moveWords(W.last) + '). ' + (sentence(d, 'It') || 'It is a safe waiting move: every piece stays protected and nothing is given away, but it creates no new threat.');
+    var grade = loss >= 150 ? 'mistake' : loss >= 60 ? 'inaccuracy' : 'good', extra;
+    if (loss >= 150) {
+      var rep = played.reply && r ? tryMove(r.chess.fen(), played.reply) : null;
+      extra = 'It was a mistake.' + (rep ? ' The strongest answer was ' + rep.move.san + ' (' + moveWords(rep.move) + ').' : '');
+      var more2 = moreDetail(fen, W.u, an, false, extra); if (more2) extra += ' ' + more2;
+      if (W.info && W.info.random) extra += ' The computer picked this move at random.';
+      else if (W.info && !W.info.full) extra += ' At level ' + S.level.toFixed(1) + ' the computer makes mistakes like this on purpose.';
+    } else if (loss >= 60) extra = 'There was something a little better for ' + who.mover.toLowerCase() + '.';
+    else extra = 'It was one of the best moves available.';
+    showCoach(label, text, extra, grade);
+    $('coach-after').hidden = false; $('coach-after').textContent = ask;
+    S.feedback = { fen: fen, played: W.u, playedSan: W.last.san, best: an.moves[0].uci, bestSan: tryMove(fen, an.moves[0].uci).move.san, an: an, opp: true };
+    $('btn-explain').hidden = !sampleFn;
+  }
+  $('btn-whynot').hidden = false; $('btn-takeback').hidden = true;
 }
 function onWhyNot() { if (S.whyNot) enterReview(Infinity); else enterReview(S.game.history().length - 1); }
 function stepReview(delta, jump) {
@@ -1301,6 +1372,7 @@ $('btn-leave').addEventListener('click', function () { online.leave(false); });
 if (window.claude && window.claude.use) {
   window.claude.use('sample').then(function (s) { sampleFn = s || null; if (sampleFn && S.feedback) $('btn-explain').hidden = false; }).catch(function () {});
 }
+$('build').textContent = BUILD;
 renderLevel();
 if (!applySaved(store.get('game', null))) newCpuGame();
 S.touched = false;
