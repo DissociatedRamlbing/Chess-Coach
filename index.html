@@ -142,7 +142,7 @@ input.code { border: 1.5px solid var(--ink); background: var(--surface); border-
       </div>
       <div class="board" id="board" aria-label="Chess board"></div>
       <div class="nav" role="group" aria-label="Step through the game">
-        <button class="btn" id="nav-start">Start</button>
+        <button class="btn" id="nav-start">Start here</button>
         <button class="btn" id="nav-back">◀ Back</button>
         <button class="btn" id="nav-fwd">Forward ▶</button>
         <button class="btn" id="nav-live">Live</button>
@@ -154,7 +154,7 @@ input.code { border: 1.5px solid var(--ink); background: var(--surface); border-
       <section class="card coach" id="coach" aria-live="polite">
         <div class="who"><span>Coach</span><span id="coach-level"></span></div>
         <h2><span class="grade ok" id="coach-grade" hidden></span><span id="coach-title">Ready when you are</span></h2>
-        <p id="coach-text">Pick your move and play it. I'll tell you whether it was right and why. If you want help, tap Nudge: with a piece selected I show that piece's best move, otherwise I point you to a piece. Tap a selected piece again to let go of it. Tap an opponent piece to ask why the last move was played. Use Back and Forward under the board to step through the game.</p>
+        <p id="coach-text">Pick your move and play it. I'll tell you whether it was right and why. If you want help, tap Nudge: with a piece selected I show that piece's best move, otherwise I point you to a piece. Tap a selected piece again to let go of it. Tap an opponent piece to ask why the last move was played. Use Back and Forward under the board to step through the game, and Start here to play on from the position shown.</p>
         <p id="coach-extra" hidden></p>
         <ul id="coach-options" hidden></ul>
         <p class="note" id="coach-after" hidden></p>
@@ -394,7 +394,8 @@ function render() {
   renderStatus(); renderMoves(); nudgeLabel();
   $('btn-whynot').textContent = W ? 'Back to the game' : 'Why not another move?';
   var n = S.game.history().length, at = W ? W.k : n;
-  $('nav-start').disabled = $('nav-back').disabled = at === 0;
+  $('nav-back').disabled = at === 0;
+  $('nav-start').disabled = !W || S.mode === 'online';
   $('nav-fwd').disabled = $('nav-live').disabled = !W;
 }
 function resultText() {
@@ -877,6 +878,24 @@ function enterReview(k) {
   $('btn-whynot').hidden = false; $('btn-takeback').hidden = true; $('btn-explain').hidden = true;
   render();
 }
+// Continue the real game from the position being looked at. Later moves are dropped.
+function startHere() {
+  var W = S.whyNot; if (!W || S.mode === 'online') return;
+  var k = W.k, dropped = uciLog.length - k, g = new Chess();
+  for (var i = 0; i < k; i++) g.move(parseUci(uciLog[i]));
+  S.cpuToken++;
+  uciLog = uciLog.slice(0, k); S.game = g;
+  S.whyNot = null; S.anCache = {}; S.lastCpu = null; S.revealed = {};
+  S.selected = null; S.targets = []; S.promo = null; S.pre = null; S.feedback = null; S.undoTo = null; S.gameCounted = false; S.endNote = '';
+  resetHint();
+  var mine = S.mode !== 'cpu' || g.turn() === S.myColor;
+  showCoach('Playing on from here', 'The game now continues from this position. The ' + dropped + (dropped === 1 ? ' move' : ' moves') + ' after it ' + (dropped === 1 ? 'was' : 'were') + ' removed. ' +
+    (S.mode === 'cpu' ? (mine ? 'It is your move.' : 'The computer moves first.') : 'It is ' + colorName(g.turn()) + '\'s move.'));
+  $('btn-takeback').hidden = true; $('btn-explain').hidden = true;
+  render();
+  if (!mine) cpuMove(); else ensurePre();
+  saveGame();
+}
 function onWhyNot() { if (S.whyNot) enterReview(Infinity); else enterReview(S.game.history().length - 1); }
 function stepReview(delta, jump) {
   var n = S.game.history().length; if (!n) return;
@@ -1089,7 +1108,7 @@ function freshGame() {
 function newCpuGame() {
   freshGame();
   showCoach('Ready when you are', S.myColor === 'w'
-    ? 'Pick your move and play it. I\'ll tell you whether it was right and why. If you want help, tap Nudge: with a piece selected I show that piece\'s best move, otherwise I point you to a piece. Tap a selected piece again to let go of it. Tap an opponent piece to ask why the last move was played. Use Back and Forward under the board to step through the game.'
+    ? 'Pick your move and play it. I\'ll tell you whether it was right and why. If you want help, tap Nudge: with a piece selected I show that piece\'s best move, otherwise I point you to a piece. Tap a selected piece again to let go of it. Tap an opponent piece to ask why the last move was played. Use Back and Forward under the board to step through the game, and Start here to play on from the position shown.'
     : 'You have Black, so the computer moves first. After each of your moves I\'ll tell you what it did well or what it gave away.');
   render();
   if (S.myColor === 'b') cpuMove(); else ensurePre();
@@ -1248,7 +1267,7 @@ $('board').addEventListener('click', function (ev) {
   if (S.whyNot) onWhyNotSquare(el.dataset.sq); else onSquare(el.dataset.sq);
 });
 $('btn-whynot').addEventListener('click', onWhyNot);
-$('nav-start').addEventListener('click', function () { stepReview(0, 'start'); });
+$('nav-start').addEventListener('click', startHere);
 $('nav-back').addEventListener('click', function () { stepReview(-1); });
 $('nav-fwd').addEventListener('click', function () { stepReview(1); });
 $('nav-live').addEventListener('click', function () { stepReview(0, 'live'); });
