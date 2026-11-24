@@ -1,0 +1,1192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chess Coach</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Noto+Sans+Symbols+2&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: board first, coach's note directly under it, controls last. Two columns on wide screens. */
+:root {
+  --bg: #eef1f4;
+  --surface: #ffffff;
+  --ink: #1b2533;
+  --muted: #5d6b7c;
+  --line: #d3dae2;
+  --accent: #b4611a;          /* the coach's voice */
+  --accent-soft: #fbf0e3;
+  --board-light: #e4ebe7;
+  --board-dark: #5f8f8a;
+  --good: #1f7a4d;
+  --warn: #a8700a;
+  --bad: #b3372f;
+  --font-display: "Bricolage Grotesque", "Trebuchet MS", sans-serif;
+  --font-body: "Atkinson Hyperlegible", "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-piece: "Noto Sans Symbols 2", "Segoe UI Symbol", "Apple Symbols", "DejaVu Sans", sans-serif;
+  --board-w: min(100vw - 24px, 520px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131a23; --surface: #1c2531; --ink: #e8edf3; --muted: #9aa8b8; --line: #303c4b;
+    --accent: #e9a15a; --accent-soft: #2e2519; --board-light: #b9c9c4; --board-dark: #4a7873;
+    --good: #5cc48f; --warn: #e2b04c; --bad: #ef7d74; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131a23; --surface: #1c2531; --ink: #e8edf3; --muted: #9aa8b8; --line: #303c4b;
+  --accent: #e9a15a; --accent-soft: #2e2519; --board-light: #b9c9c4; --board-dark: #4a7873;
+  --good: #5cc48f; --warn: #e2b04c; --bad: #ef7d74; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.45; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.wrap { max-width: 980px; margin: 0 auto; padding: 14px 12px 40px; display: flex; flex-direction: column; gap: 12px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
+h1 { font-family: var(--font-display); font-weight: 800; font-size: 1.6rem; margin: 0; letter-spacing: -0.01em; }
+.tabs { display: flex; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
+.tabs button { border: 0; background: transparent; padding: 7px 11px; border-radius: 7px; color: var(--muted); font-weight: 700; font-size: 0.9rem; }
+.tabs button[aria-selected="true"] { background: var(--ink); color: var(--bg); }
+.main { display: grid; grid-template-columns: 1fr; gap: 12px; }
+@media (min-width: 880px) { .main { grid-template-columns: auto 1fr; align-items: start; gap: 20px; } }
+.boardcol { display: flex; flex-direction: column; gap: 8px; width: var(--board-w); max-width: 100%; margin: 0 auto; }
+.status { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 700; min-height: 1.6em; }
+.status .turn { display: flex; align-items: center; gap: 8px; }
+.dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--ink); flex: none; }
+.dot.w { background: #fff; } .dot.b { background: #1b2533; border-color: var(--muted); }
+.status .sub { color: var(--muted); font-weight: 400; font-size: 0.9rem; text-align: right; }
+.board { position: relative; width: var(--board-w); height: var(--board-w); display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr);
+  border-radius: 8px; overflow: hidden; border: 2px solid var(--ink); user-select: none; -webkit-user-select: none; touch-action: manipulation; }
+.sq { position: relative; border: 0; padding: 0; margin: 0; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 0;
+  font-family: var(--font-piece); font-size: calc(var(--board-w) / 8 * 0.78); line-height: 1; -webkit-tap-highlight-color: transparent; }
+.board.rewind { outline: 4px dashed var(--accent); outline-offset: 3px; }
+.sq.l { background: var(--board-light); } .sq.d { background: var(--board-dark); }
+.sq .pc.w { color: #fdfdfb; text-shadow: 0 0 1px #10161f, 1px 1px 0 #10161f, -1px 1px 0 #10161f, 1px -1px 0 #10161f, -1px -1px 0 #10161f, 0 2px 2px rgba(0,0,0,.35); }
+.sq .pc.b { color: #18202c; text-shadow: 0 0 1px rgba(255,255,255,.55), 0 1px 1px rgba(255,255,255,.25); }
+.sq.last::before { content: ""; position: absolute; inset: 0; background: rgba(240, 200, 70, .38); }
+.sq.sel::before { content: ""; position: absolute; inset: 0; background: rgba(240, 160, 40, .6); }
+.sq.check::before { content: ""; position: absolute; inset: 0; background: radial-gradient(circle, rgba(215,50,40,.85) 0%, rgba(215,50,40,0) 72%); }
+.sq.hint::after { content: ""; position: absolute; inset: 4%; border: 4px solid var(--accent); border-radius: 50%; z-index: 2; }
+.sq.target .mark { position: absolute; width: 28%; height: 28%; border-radius: 50%; background: rgba(20, 30, 45, .38); z-index: 2; }
+.sq.target.cap .mark { width: 86%; height: 86%; background: transparent; border: 5px solid rgba(20, 30, 45, .38); }
+.sq .pc { position: relative; z-index: 1; }
+.sq .co { position: absolute; font: 700 10px/1 var(--font-body); opacity: .75; z-index: 1; }
+.sq .co.f { right: 3px; bottom: 2px; } .sq .co.r { left: 3px; top: 2px; }
+.sq.l .co { color: #3d6661; } .sq.d .co { color: #e4ebe7; }
+.promo { position: absolute; inset: 0; background: rgba(15, 22, 32, .6); display: flex; align-items: center; justify-content: center; gap: 8px; z-index: 5; }
+.promo button { font-family: var(--font-piece); font-size: calc(var(--board-w) / 8 * 0.9); width: 1.4em; height: 1.4em; border-radius: 10px; border: 2px solid var(--ink); background: var(--board-light); color: #18202c; }
+.side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.coach { border-left: 5px solid var(--accent); }
+.coach .who { font: 800 0.78rem/1 var(--font-display); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); display: flex; justify-content: space-between; gap: 8px; }
+.coach h2 { font-family: var(--font-display); font-size: 1.2rem; margin: 0; display: flex; align-items: center; gap: 8px; text-wrap: balance; }
+.grade { display: inline-block; font: 700 0.72rem/1 var(--font-body); padding: 4px 7px; border-radius: 999px; color: #fff; text-transform: uppercase; letter-spacing: .04em; flex: none; }
+.grade.best, .grade.good { background: var(--good); } .grade.ok { background: var(--muted); }
+.grade.inaccuracy { background: var(--warn); } .grade.mistake, .grade.blunder { background: var(--bad); }
+:root[data-theme="dark"] .grade { color: #131a23; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .grade { color: #131a23; } }
+.coach p { margin: 0; max-width: 62ch; }
+.coach ul { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 6px; max-width: 62ch; }
+.coach #coach-extra.lead { font-weight: 700; }
+.coach .ai { background: var(--accent-soft); border-radius: 8px; padding: 10px; white-space: pre-wrap; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btn { border: 1.5px solid var(--ink); background: var(--surface); border-radius: 9px; padding: 9px 13px; font-weight: 700; min-height: 42px; }
+.btn.primary { background: var(--ink); color: var(--bg); }
+.btn.accent { background: var(--accent); border-color: var(--accent); color: #fff; }
+:root[data-theme="dark"] .btn.accent { color: #131a23; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .btn.accent { color: #131a23; } }
+.btn:disabled { opacity: .45; cursor: default; }
+.card h3 { font-family: var(--font-display); font-size: 1rem; margin: 0; }
+label.field { display: flex; flex-direction: column; gap: 4px; font-weight: 700; font-size: 0.92rem; }
+.lvl { display: flex; align-items: center; gap: 10px; }
+.lvl input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); height: 32px; }
+.lvl output { font: 800 1.5rem/1 var(--font-display); font-variant-numeric: tabular-nums; min-width: 2.2ch; text-align: right; }
+.hintline { color: var(--muted); font-size: 0.88rem; font-weight: 400; margin: 0; }
+.check { display: flex; align-items: center; gap: 8px; font-weight: 400; }
+.check input { width: 20px; height: 20px; accent-color: var(--accent); }
+.seg { display: inline-flex; border: 1.5px solid var(--ink); border-radius: 9px; overflow: hidden; }
+.seg button { border: 0; background: transparent; padding: 8px 12px; font-weight: 700; min-height: 40px; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+input.code { border: 1.5px solid var(--ink); background: var(--surface); border-radius: 9px; padding: 8px 10px; width: 7.5ch; text-transform: uppercase; letter-spacing: .15em; font-weight: 700; min-height: 42px; }
+.codebig { font: 800 1.7rem/1 var(--font-display); letter-spacing: .18em; }
+.nav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.nav .btn { padding: 8px 4px; font-size: 0.92rem; white-space: nowrap; }
+.moves { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 0.92rem; max-height: 7.5em; overflow-y: auto; margin: 0; word-spacing: 2px; }
+.moves b { color: var(--ink); font-weight: 700; }
+.note { color: var(--muted); font-size: 0.9rem; margin: 0; }
+.err { color: var(--bad); font-weight: 700; margin: 0; }
+[hidden] { display: none !important; }
+@media (prefers-reduced-motion: no-preference) { .sq .pc { transition: transform .08s; } .sq.sel .pc { transform: scale(1.08); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Chess Coach</h1>
+    <div class="tabs" role="tablist" aria-label="Opponent">
+      <button role="tab" id="tab-cpu" aria-selected="true">Computer</button>
+      <button role="tab" id="tab-online" aria-selected="false">A person online</button>
+      <button role="tab" id="tab-local" aria-selected="false">Same device</button>
+    </div>
+  </header>
+
+  <div class="main">
+    <div class="boardcol">
+      <div class="status">
+        <div class="turn"><span class="dot w" id="turn-dot"></span><span id="turn-text">White to move</span></div>
+        <div class="sub" id="status-sub"></div>
+      </div>
+      <div class="board" id="board" aria-label="Chess board"></div>
+      <div class="nav" role="group" aria-label="Step through the game">
+        <button class="btn" id="nav-start">Start</button>
+        <button class="btn" id="nav-back">◀ Back</button>
+        <button class="btn" id="nav-fwd">Forward ▶</button>
+        <button class="btn" id="nav-live">Live</button>
+      </div>
+      <p class="moves" id="moves" aria-label="Moves so far"></p>
+    </div>
+
+    <div class="side">
+      <section class="card coach" id="coach" aria-live="polite">
+        <div class="who"><span>Coach</span><span id="coach-level"></span></div>
+        <h2><span class="grade ok" id="coach-grade" hidden></span><span id="coach-title">Ready when you are</span></h2>
+        <p id="coach-text">Pick your move and play it. I'll tell you whether it was right and why. If you want help, tap Nudge: with a piece selected I show that piece's best move, otherwise I point you to a piece. Tap a selected piece again to let go of it. Tap an opponent piece to ask why the last move was played. Use Back and Forward under the board to step through the game.</p>
+        <p id="coach-extra" hidden></p>
+        <ul id="coach-options" hidden></ul>
+        <p class="note" id="coach-after" hidden></p>
+        <p class="ai" id="coach-ai" hidden></p>
+        <div class="row">
+          <button class="btn accent" id="btn-hint">Nudge</button>
+          <button class="btn" id="btn-takeback" hidden>Take it back</button>
+          <button class="btn" id="btn-whynot" hidden>Why not another move?</button>
+          <button class="btn" id="btn-explain" hidden>Explain more</button>
+        </div>
+      </section>
+
+      <section class="card" id="panel-online" hidden>
+        <h3>Play a person online</h3>
+        <div id="online-lobby">
+          <p class="note">Both of you open this page. One creates a game and tells the other the code.</p>
+          <div class="row">
+            <span>I play</span>
+            <div class="seg" id="online-color"><button aria-pressed="true" data-c="w">White</button><button aria-pressed="false" data-c="b">Black</button></div>
+            <button class="btn primary" id="btn-create">Create game</button>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <label for="join-code">Code</label>
+            <input class="code" id="join-code" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false">
+            <button class="btn" id="btn-join">Join game</button>
+          </div>
+        </div>
+        <div id="online-game" hidden>
+          <div class="row"><span>Game code</span><span class="codebig" id="online-code"></span></div>
+          <p class="note" id="online-info"></p>
+          <div class="row">
+            <button class="btn" id="btn-rematch">Start over</button>
+            <button class="btn" id="btn-leave">Leave game</button>
+          </div>
+        </div>
+        <p class="err" id="online-err" hidden></p>
+      </section>
+
+      <section class="card">
+        <h3 id="level-title">Your level</h3>
+        <div class="lvl">
+          <input type="range" id="level" min="0" max="2" step="0.1" value="0.5" aria-labelledby="level-title">
+          <output id="level-out" for="level">0.5</output>
+        </div>
+        <p class="hintline" id="level-desc"></p>
+        <label class="check" id="auto-wrap"><input type="checkbox" id="auto" checked> Move my level up after a win and down after a loss</label>
+        <label class="check"><input type="checkbox" id="coach-on" checked> Coach comments after I move</label>
+        <div class="row" id="cpu-controls">
+          <span>I play</span>
+          <div class="seg" id="cpu-color"><button aria-pressed="true" data-c="w">White</button><button aria-pressed="false" data-c="b">Black</button></div>
+          <button class="btn primary" id="btn-new">New game</button>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script src="supabase.js"></script>
+<script src="config.js"></script>
+<script src="sync.js"></script>
+<script src="chess.bundle.js"></script>
+<script src="engine.js"></script>
+<script>
+(function () {
+'use strict';
+var Chess = ChessLib.Chess;
+var $ = function (id) { return document.getElementById(id); };
+var GLYPH = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
+var NAME = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
+var VAL = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
+var MATE = 100000;
+
+/* ---------- small helpers ---------- */
+var store = {
+  get: function (k, d) { try { var v = localStorage.getItem('cc.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set: function (k, v) { try { localStorage.setItem('cc.' + k, JSON.stringify(v)); } catch (e) {} }
+};
+function lerp(a, b, t) { return a + (b - a) * t; }
+function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
+function other(c) { return c === 'w' ? 'b' : 'w'; }
+function colorName(c) { return c === 'w' ? 'White' : 'Black'; }
+function parseUci(u) { return { from: u.slice(0, 2), to: u.slice(2, 4), promotion: u.length > 4 ? u[4] : undefined }; }
+function tryMove(fen, u) { try { var c = new Chess(fen); var m = c.move(parseUci(u)); return { move: m, chess: c }; } catch (e) { return null; } }
+function roundLevel(x) { return Math.round(clamp(x, 0, 2) * 10) / 10; }
+
+/* ---------- engine (worker, with main-thread fallback) ---------- */
+var worker = null, workerOk = true, reqId = 0, waiting = {};
+try {
+  worker = new Worker('engine.js');
+  worker.onmessage = function (ev) {
+    var w = waiting[ev.data.id]; if (!w) return; delete waiting[ev.data.id];
+    if (ev.data.error) { workerOk = false; w.resolve(runLocal(w.fen, w.opts)); } else w.resolve(ev.data.result);
+  };
+  worker.onerror = function () {
+    workerOk = false;
+    Object.keys(waiting).forEach(function (id) { var w = waiting[id]; delete waiting[id]; w.resolve(runLocal(w.fen, w.opts)); });
+  };
+} catch (e) { workerOk = false; }
+function runLocal(fen, opts) {
+  return new Promise(function (res) {
+    setTimeout(function () {
+      try { res(ChessEngine.analyze(fen, { maxDepth: Math.min(opts.maxDepth, 3), timeMs: Math.min(opts.timeMs, 500) })); }
+      catch (e) { res({ depth: 0, moves: [] }); }
+    }, 30);
+  });
+}
+function analyze(fen, opts) {
+  if (!workerOk || !worker) return runLocal(fen, opts);
+  return new Promise(function (resolve) {
+    var id = ++reqId; waiting[id] = { resolve: resolve, fen: fen, opts: opts };
+    worker.postMessage({ id: id, fen: fen, maxDepth: opts.maxDepth, timeMs: opts.timeMs });
+  });
+}
+
+/* ---------- page services (shared storage, who is viewing) ---------- */
+var svcP = null;
+function services() {
+  if (svcP) return svcP;
+  if (!window.claude || !window.claude.use) return (svcP = Promise.resolve({ db: null }));
+  svcP = Promise.all([window.claude.use('db'), window.claude.use('user')]).then(function (r) {
+    var db = r[0], user = r[1];
+    if (!db) return { db: null };
+    var idp = user && user.id ? user.id() : Promise.resolve(null);
+    var canp = user && user.can ? user.can('data.write') : Promise.resolve(null);
+    return Promise.all([idp, canp]).then(function (x) { return { db: db, user: user, realId: x[0], canWrite: x[1] !== false }; });
+  }).catch(function () { return { db: null }; });
+  return svcP;
+}
+
+/* ---------- saving the game in progress ---------- */
+// Saved in this browser. Inside Claude it is also saved to your private storage with the page.
+var saver = { ref: null, busy: false, next: null };
+function pushSave(st) {
+  if (!saver.ref) return;
+  if (saver.busy) { saver.next = st; return; }
+  saver.busy = true;
+  saver.ref.set(st).catch(function () {}).then(function () {
+    saver.busy = false;
+    if (saver.next) { var n = saver.next; saver.next = null; pushSave(n); }
+  });
+}
+function saveGame() {
+  if (S.restoring) return;
+  S.touched = true;
+  var st = { mode: S.mode, moves: S.mode === 'online' ? [] : uciLog.slice(), myColor: S.myColor, level: S.level,
+             code: S.mode === 'online' ? (online.code || '') : '', t: Date.now() };
+  store.set('game', st); pushSave(st);
+}
+function applySaved(st) {
+  if (!st || !Array.isArray(st.moves) || ['cpu', 'local', 'online'].indexOf(st.mode) < 0) return false;
+  var g = new Chess(), moves = [];
+  try { st.moves.forEach(function (u) { if (typeof u !== 'string') throw 0; g.move(parseUci(u)); moves.push(u); }); } catch (e) { return false; }
+  S.restoring = true;
+  try {
+    if (typeof st.level === 'number') { S.level = roundLevel(st.level); store.set('level', S.level); }
+    if (st.mode === 'online') {
+      if (typeof st.code === 'string' && /^[A-Z0-9]{4}$/.test(st.code)) online.autoJoin = st.code;
+      setMode('online');
+    } else {
+      S.myColor = st.mode === 'cpu' && st.myColor === 'b' ? 'b' : 'w';
+      Array.prototype.forEach.call($('cpu-color').querySelectorAll('button'), function (x) { x.setAttribute('aria-pressed', String(x.dataset.c === S.myColor)); });
+      setMode(st.mode);
+      S.cpuToken++;                       // cancel the fresh game's first computer move
+      S.game = g; uciLog = moves; S.gameCounted = g.isGameOver();
+      if (moves.length) showCoach('Welcome back', 'Your game is where you left it.');
+      render();
+      if (g.isGameOver()) afterGameOver();
+      else if (st.mode === 'cpu' && g.turn() !== S.myColor) cpuMove();
+      else ensurePre();
+    }
+    renderLevel();
+  } finally { S.restoring = false; }
+  return true;
+}
+
+/* ---------- state ---------- */
+var S = {
+  mode: 'cpu',            // cpu | online | local
+  game: new Chess(),
+  myColor: 'w',           // side at the bottom / side I move (cpu, online)
+  seat: 'w',              // online: 'w' | 'b' | null (watching)
+  level: roundLevel(store.get('level', 0.5)),
+  auto: store.get('auto', true),
+  coachOn: store.get('coachOn', true),
+  selected: null, targets: [], hintSquares: [], promo: null,
+  pre: null,              // {fen, promise} analysis of the position I'm about to move in
+  feedback: null,         // last coach verdict
+  undoTo: null,           // history length to return to on take-back
+  cpuToken: 0, gameCounted: false, busy: false,
+  hintStage: 0, hintMove: null, revealed: {}, whyNot: null, anCache: {}, restoring: false, touched: false
+};
+var uciLog = [];          // moves of the current game as uci strings
+
+/* ---------- board rendering ---------- */
+function canMoveNow() {
+  if (S.busy || S.promo || S.whyNot || S.game.isGameOver()) return false;
+  if (S.mode === 'local') return true;
+  if (S.mode === 'online') return online.joined && S.seat === S.game.turn() && online.canWrite;
+  return S.game.turn() === S.myColor;
+}
+function render() {
+  var W = S.whyNot, g = W ? W.view : S.game, board = $('board'), flip = S.myColor === 'b' && S.mode !== 'local';
+  board.textContent = ''; board.classList.toggle('rewind', !!W);
+  var hist = g.history({ verbose: true }), last = hist.length ? hist[hist.length - 1] : null;
+  var selSq = W ? W.sel : S.selected;
+  var checkSq = null;
+  if (g.isCheck()) {
+    g.board().forEach(function (row) { row.forEach(function (p) { if (p && p.type === 'k' && p.color === g.turn()) checkSq = p.square; }); });
+  }
+  for (var r = 0; r < 8; r++) for (var f = 0; f < 8; f++) {
+    var file = flip ? 7 - f : f, rank = flip ? r + 1 : 8 - r;
+    var sq = 'abcdefgh'[file] + rank;
+    var el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'sq ' + ((file + rank) % 2 === 0 ? 'd' : 'l');
+    el.dataset.sq = sq;
+    var p = g.get(sq);
+    el.setAttribute('aria-label', sq + (p ? ' ' + colorName(p.color) + ' ' + NAME[p.type] : ''));
+    if (last && (last.from === sq || last.to === sq)) el.classList.add('last');
+    if (selSq === sq) el.classList.add('sel');
+    if (checkSq === sq) el.classList.add('check');
+    if (!W && S.hintSquares.indexOf(sq) >= 0) el.classList.add('hint');
+    if (p) { var s = document.createElement('span'); s.className = 'pc ' + p.color; s.textContent = GLYPH[p.type] + '︎'; el.appendChild(s); }
+    if (f === 7) { var cr = document.createElement('span'); cr.className = 'co f'; cr.textContent = '' ; el.appendChild(cr); }
+    if (r === 7) { var cf = document.createElement('span'); cf.className = 'co f'; cf.textContent = 'abcdefgh'[file]; el.appendChild(cf); }
+    if (f === 0) { var c2 = document.createElement('span'); c2.className = 'co r'; c2.textContent = rank; el.appendChild(c2); }
+    board.appendChild(el);
+  }
+  if (S.promo) {
+    var ov = document.createElement('div'); ov.className = 'promo';
+    ['q', 'r', 'b', 'n'].forEach(function (t) {
+      var b = document.createElement('button'); b.type = 'button'; b.textContent = GLYPH[t] + '︎';
+      b.setAttribute('aria-label', 'Promote to ' + NAME[t]); b.dataset.promo = t; ov.appendChild(b);
+    });
+    board.appendChild(ov);
+  }
+  renderStatus(); renderMoves(); nudgeLabel();
+  $('btn-whynot').textContent = W ? 'Back to the game' : 'Why not another move?';
+  var n = S.game.history().length, at = W ? W.k : n;
+  $('nav-start').disabled = $('nav-back').disabled = at === 0;
+  $('nav-fwd').disabled = $('nav-live').disabled = !W;
+}
+function resultText() {
+  var g = S.game;
+  if (g.isCheckmate()) return colorName(other(g.turn())) + ' wins by checkmate';
+  if (g.isStalemate()) return 'Draw by stalemate';
+  if (g.isInsufficientMaterial()) return 'Draw, not enough pieces to checkmate';
+  if (g.isThreefoldRepetition()) return 'Draw by repetition';
+  if (g.isDraw()) return 'Draw';
+  return '';
+}
+function renderStatus() {
+  var g = S.game, t = g.turn(), over = g.isGameOver();
+  $('turn-dot').className = 'dot ' + (S.whyNot ? S.whyNot.view.turn() : t);
+  var txt;
+  if (S.whyNot) { $('turn-text').textContent = 'Looking back: before ' + moveLabel(S.whyNot.k, S.whyNot.last.san); $('status-sub').textContent = 'Not the live game'; return; }
+  if (over) txt = resultText();
+  else if (S.mode === 'cpu') txt = t === S.myColor ? 'Your move' : 'Computer is thinking';
+  else if (S.mode === 'online' && online.joined && S.seat) txt = t === S.seat ? 'Your move' : 'Waiting for your opponent';
+  else txt = colorName(t) + ' to move';
+  if (!over && g.isCheck()) txt += ' (check)';
+  $('turn-text').textContent = txt;
+  var sub = '';
+  if (S.mode === 'cpu') sub = 'You are ' + colorName(S.myColor) + ' · computer level ' + S.level.toFixed(1);
+  else if (S.mode === 'online' && online.joined) sub = S.seat ? 'You are ' + colorName(S.seat) : 'Watching';
+  $('status-sub').textContent = sub;
+}
+function renderMoves() {
+  var h = S.game.history(), el = $('moves'); el.textContent = '';
+  if (!h.length) { el.textContent = 'No moves yet.'; return; }
+  for (var i = 0; i < h.length; i += 2) {
+    var b = document.createElement('b'); b.textContent = (i / 2 + 1) + '. ';
+    el.appendChild(b);
+    el.appendChild(document.createTextNode(h[i] + (h[i + 1] ? ' ' + h[i + 1] : '') + '  '));
+  }
+  el.scrollTop = el.scrollHeight;
+}
+
+/* ---------- coach: describing moves ---------- */
+function isHanging(c, sq) {
+  var p = c.get(sq); if (!p) return false;
+  var att = c.attackers(sq, other(p.color)); if (!att.length) return false;
+  var def = c.attackers(sq, p.color); if (!def.length) return true;
+  var low = Math.min.apply(null, att.map(function (a) { return VAL[c.get(a).type]; }));
+  return low < VAL[p.type];
+}
+// What a move achieves, as short verb phrases.
+function describe(fen, u, replyUci) {
+  var r = tryMove(fen, u); if (!r) return [];
+  var m = r.move, after = r.chess, before = new Chess(fen), out = [];
+  if (after.isCheckmate()) return ['is checkmate'];
+  if (m.flags.indexOf('k') >= 0 || m.flags.indexOf('q') >= 0) out.push('castles, which tucks the king away and brings a rook into play');
+  if (m.promotion) out.push('promotes the pawn to a ' + NAME[m.promotion]);
+  if (m.captured) {
+    var recapture = replyUci && replyUci.slice(2, 4) === m.to;
+    var gain = VAL[m.captured], give = VAL[m.piece];
+    if (replyUci === undefined) out.push('takes the ' + NAME[m.captured] + ' on ' + m.to);
+    else if (!recapture) out.push('wins the ' + NAME[m.captured] + ' on ' + m.to + ' for free');
+    else if (gain > give) out.push('wins material, giving a ' + NAME[m.piece] + ' (' + give + ') for a ' + NAME[m.captured] + ' (' + gain + ')');
+    else if (gain === give) out.push('trades ' + NAME[m.piece] + ' for ' + NAME[m.captured] + ', an even swap');
+    else out.push('takes the ' + NAME[m.captured] + ' on ' + m.to);
+  }
+  if (after.isCheck()) out.push('puts the king in check');
+  if (m.piece !== 'p' && m.piece !== 'k' && isHanging(before, m.from) && !isHanging(after, m.to)) out.push('moves the ' + NAME[m.piece] + ' out of danger');
+  var home = m.color === 'w' ? '1' : '8';
+  if ((m.piece === 'n' || m.piece === 'b') && m.from[1] === home && before.moveNumber() <= 15) out.push('brings the ' + NAME[m.piece] + ' into the game');
+  if (m.piece === 'p' && ['d4', 'e4', 'd5', 'e5'].indexOf(m.to) >= 0 && !m.captured) out.push('claims space in the center');
+  if (!isHanging(after, m.to)) {
+    var bestT = null;
+    after.board().forEach(function (row) { row.forEach(function (p) {
+      if (!p || p.color === m.color || p.type === 'k') return;
+      if (after.attackers(p.square, m.color).indexOf(m.to) < 0) return;
+      var loose = after.attackers(p.square, p.color).length === 0;
+      if ((VAL[p.type] > VAL[m.piece] || (loose && p.type !== 'p')) && (!bestT || VAL[p.type] > VAL[bestT.type])) bestT = p;
+    }); });
+    if (bestT && !after.isCheck()) out.push('attacks the ' + NAME[bestT.type] + ' on ' + bestT.square);
+  }
+  return out;
+}
+// A move's notation spelled out, e.g. Nxe5+ -> "knight takes pawn on e5, check".
+function moveWords(m) {
+  var w;
+  if (m.flags.indexOf('k') >= 0) w = 'castle kingside';
+  else if (m.flags.indexOf('q') >= 0) w = 'castle queenside';
+  else {
+    w = NAME[m.piece] + (m.captured ? ' takes ' + NAME[m.captured] + ' on ' : ' to ') + m.to;
+    if (m.flags.indexOf('e') >= 0) w += ' en passant';
+    if (m.promotion) w += ', promoting to a ' + NAME[m.promotion];
+  }
+  if (m.san.slice(-1) === '#') w += ', checkmate'; else if (m.san.slice(-1) === '+') w += ', check';
+  return w;
+}
+function sentence(parts, lead) {
+  if (!parts.length) return '';
+  var s = parts.length === 1 ? parts[0] : parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
+  return lead + ' ' + s + '.';
+}
+function coachLevel() { return Math.min(2.2, S.level + 0.2); }
+
+/* ---------- coach: judging the move just played ---------- */
+function judge(fen, playedUci, an, canTakeBack) {
+  if (!an || !an.moves.length) return null;
+  var best = an.moves[0], played = null;
+  an.moves.forEach(function (m) { if (m.uci === playedUci) played = m; });
+  if (!played) return null;
+  var t = coachLevel() / 2.2, cap = function (s) { return clamp(s, -1500, 1500); };
+  var loss = cap(best.score) - cap(played.score);
+  var thrB = lerp(400, 200, t), thrM = lerp(220, 100, t), thrI = lerp(130, 50, t);
+  var bestSan = tryMove(fen, best.uci), playedMv = tryMove(fen, playedUci);
+  var bestIsMate = best.score >= MATE - 1, letsMate = played.score <= -(MATE - 2);
+  var grade;
+  if (played.uci === best.uci || loss <= 10) grade = 'best';
+  else if (letsMate && best.score > -(MATE - 50)) grade = 'blunder';
+  else if (loss >= thrB) grade = 'blunder';
+  else if (loss >= thrM || (bestIsMate && !(played.score >= MATE - 50))) grade = 'mistake';
+  else if (loss >= thrI) grade = 'inaccuracy';
+  else grade = loss <= 20 ? 'good' : 'ok';
+  var fb = { grade: grade, fen: fen, played: playedUci, best: best.uci, playedSan: playedMv.move.san, bestSan: bestSan.move.san,
+             an: an, title: '', text: '', extra: '', canTakeBack: false };
+  var did = describe(fen, playedUci, played.reply);
+  var named = 'You played ' + fb.playedSan + ' (' + moveWords(playedMv.move) + '). ';
+  if (grade === 'best' || grade === 'good') {
+    fb.title = grade === 'best' ? 'Best move' : 'Good move';
+    fb.text = named + (sentence(did, 'It') || 'A calm move that keeps your position healthy.');
+    if (grade === 'best') fb.extra = 'That is the move I would have picked.';
+    return fb;
+  }
+  // Neutral or bad: say what is wrong with it, then list what was better.
+  var why = '', pts = Math.round(loss / 100);
+  var replyMv = played.reply ? tryMove(playedMv.chess.fen(), played.reply) : null;
+  var replyNamed = replyMv ? replyMv.move.san + ' (' + moveWords(replyMv.move) + ')' : '';
+  if (letsMate && replyMv && replyMv.chess.isCheckmate()) why = 'It lets your opponent checkmate you with ' + replyNamed + '.';
+  else if (letsMate) why = 'It lets your opponent force checkmate, starting with ' + replyNamed + '.';
+  else if (bestIsMate) why = 'You had a checkmate in one move here and this is not it.';
+  else {
+    var freeWin = bestSan.move.captured && !(best.reply && best.reply.slice(2, 4) === bestSan.move.to) ? bestSan.move : null;
+    var drops = replyMv && replyMv.move.captured && VAL[replyMv.move.captured] >= 3 && loss >= 150 ? replyMv.move : null;
+    if (freeWin && (!drops || VAL[freeWin.captured] >= VAL[drops.captured])) {
+      why = 'It passes up a free ' + NAME[freeWin.captured] + ' on ' + freeWin.to + '.';
+      if (drops) why += ' It also lets your opponent answer ' + replyNamed + ' and take your ' + NAME[drops.captured] + '.';
+    } else if (drops) why = 'Your opponent can answer ' + replyNamed + ' and take your ' + NAME[drops.captured] + ' on ' + drops.to + '.';
+  }
+  if (why) { /* explained above */ }
+  else if (replyMv && replyMv.move.captured && loss >= 60) why = 'Your opponent can answer ' + replyNamed + ' and come out ahead.';
+  else if (replyMv && grade !== 'ok') {
+    var rd = describe(playedMv.chess.fen(), played.reply, undefined);
+    why = 'It gives your opponent time for ' + replyNamed + (rd.length ? ', which ' + rd.join(' and ') : '') + '.';
+  }
+  else if (!did.length) why = 'It does not develop a piece, win anything or create a threat, so it spends a turn without improving your position.';
+  else why = 'It is fine, though it does less for your position than the options below.';
+  if (pts >= 1 && !letsMate && !bestIsMate) why += ' That costs about ' + pts + (pts === 1 ? ' point, the value of a pawn.' : ' points' + (pts === 3 ? ', the value of a knight or bishop.' : pts === 5 ? ', the value of a rook.' : '.'));
+  if (pts >= 9 && !letsMate && !bestIsMate) why = why.replace(/ That costs about \d+ points\.$/, ' That costs a queen\'s worth or more.');
+  // Up to three clearly better moves, each with what it does.
+  var opts = [];
+  an.moves.forEach(function (m) {
+    if (opts.length >= 3 || m.uci === playedUci) return;
+    if (cap(m.score) - cap(played.score) < Math.max(25, loss * 0.4)) return;
+    var r = tryMove(fen, m.uci); if (!r) return;
+    var d = describe(fen, m.uci, m.reply);
+    opts.push({ uci: m.uci, text: r.move.san + ' (' + moveWords(r.move) + '): ' + (d.length ? d.join(', ') : 'improves your position without giving anything away') + '.' });
+  });
+  fb.options = opts;
+  fb.title = grade === 'ok' ? 'Playable, but there was better' : grade === 'inaccuracy' ? 'Okay, but there was better' : grade === 'blunder' ? 'That one costs a lot' : 'That one costs you';
+  fb.text = (named + (sentence(did, 'It') + ' ' + why)).replace(/\s+/g, ' ').trim();
+  fb.canTakeBack = canTakeBack && (grade === 'mistake' || grade === 'blunder');
+  fb.extra = opts.length ? (opts.length === 1 ? 'A better option:' : 'Better options:') : '';
+  if (fb.canTakeBack) fb.after = opts.length ? 'You can take it back and play one of these.' + (S.mode === 'cpu' ? ' If you do, the computer answers at coach strength.' : '') : 'You can take it back and look again.';
+  return fb;
+}
+var GRADE_LABEL = { best: 'Best', good: 'Good', ok: 'Fine', inaccuracy: 'Slip', mistake: 'Mistake', blunder: 'Big mistake' };
+function showCoach(title, text, extra, grade) {
+  $('coach-title').textContent = title;
+  $('coach-text').textContent = text || '';
+  $('coach-extra').textContent = extra || ''; $('coach-extra').hidden = !extra;
+  var g = $('coach-grade');
+  if (grade) { g.hidden = false; g.className = 'grade ' + grade; g.textContent = GRADE_LABEL[grade]; } else g.hidden = true;
+  $('coach-ai').hidden = true; $('coach-ai').textContent = '';
+  $('btn-whynot').hidden = true;
+  $('coach-options').hidden = true; $('coach-options').textContent = ''; $('coach-extra').classList.remove('lead');
+  $('coach-after').hidden = true; $('coach-after').textContent = '';
+}
+function showFeedback(fb) {
+  S.feedback = fb;
+  showCoach(fb.title, fb.text, fb.extra, fb.grade);
+  $('coach-extra').classList.toggle('lead', !!(fb.options && fb.options.length));
+  if (fb.options && fb.options.length) {
+    var ul = $('coach-options'); ul.hidden = false;
+    fb.options.forEach(function (o) {
+      var li = document.createElement('li'); li.textContent = o.text; ul.appendChild(li);
+      S.revealed[fb.fen + '|' + o.uci] = true;      // shown by the coach, so playing it after a take-back counts as the coach's move
+    });
+  }
+  if (fb.after) { $('coach-after').hidden = false; $('coach-after').textContent = fb.after; }
+  $('btn-takeback').hidden = !fb.canTakeBack;
+  $('btn-explain').hidden = !sampleFn;
+}
+
+/* ---------- coach: hints ---------- */
+// The coach suggests a move a player slightly above your level would find:
+// sound according to the engine, and as easy to understand as possible.
+function pickCoachMove(fen, an) {
+  var best = an.moves[0], t = coachLevel() / 2.2, tol = lerp(90, 25, t), pick = best, top = -1;
+  an.moves.forEach(function (m) {
+    if (best.score - m.score > tol && m.uci !== best.uci) return;
+    if (best.score >= MATE - 50 && m.score < MATE - 50) return;
+    var r = tryMove(fen, m.uci); if (!r) return;
+    var d = describe(fen, m.uci, m.reply), simple = d.length * 2 + (r.move.captured ? 2 : 0) - (best.score - m.score) / 40;
+    if (r.chess.isCheckmate()) simple += 100;
+    if (simple > top) { top = simple; pick = m; }
+  });
+  return pick;
+}
+function ensurePre() {
+  var fen = S.game.fen();
+  if (!S.pre || S.pre.fen !== fen) S.pre = { fen: fen, promise: analyze(fen, { maxDepth: 4, timeMs: 1500 }) };
+  return S.pre;
+}
+function onHint() {
+  if (S.game.isGameOver()) return;
+  if (!canMoveNow()) { showCoach('Not your turn yet', 'I can give a nudge once it is your move.'); return; }
+  var pre = ensurePre(), fen = pre.fen;
+  if (S.hintStage === 0) showCoach('Thinking', 'One moment.');
+  pre.promise.then(function (an) {
+    if (S.game.fen() !== fen || !an.moves.length) return;
+    var mv = S.hintMove && S.hintMove.fen === fen ? S.hintMove.mv : pickCoachMove(fen, an);
+    S.hintMove = { fen: fen, mv: mv };
+    var r = tryMove(fen, mv.uci); if (!r) return;
+    $('btn-takeback').hidden = true; $('btn-explain').hidden = true;
+    if (S.hintStage === 0) {
+      S.hintStage = 1; S.hintSquares = [r.move.from];
+      showCoach('Nudge', 'Look at your ' + NAME[r.move.piece] + ' on ' + r.move.from + '. Where could it do the most good?', 'Tap again to see the move.');
+      $('btn-hint').textContent = 'Show the move';
+    } else {
+      S.hintStage = 2; S.hintSquares = [r.move.from, r.move.to]; S.revealed[fen + '|' + mv.uci] = true;
+      var d = describe(fen, mv.uci, mv.reply), extra = '';
+      if (mv.reply) { var rep = tryMove(r.chess.fen(), mv.reply); if (rep) extra = 'I expect the reply ' + rep.move.san + '.'; }
+      showCoach('Try ' + r.move.san, r.move.san + ' means ' + moveWords(r.move) + '. ' + (sentence(d, 'It') || 'It improves your position without giving anything away.'), extra);
+      S.feedback = { fen: fen, played: mv.uci, playedSan: r.move.san, best: an.moves[0].uci, bestSan: tryMove(fen, an.moves[0].uci).move.san, an: an, hint: true };
+      $('btn-explain').hidden = !sampleFn;
+      $('btn-hint').textContent = 'Nudge';
+    }
+    render();
+  });
+}
+// Nudge with a piece selected: the coach shows that piece's best move.
+function touchSuggest(sq) {
+  S.touch = null; S.hintSquares = []; S.hintStage = 0; $('btn-hint').textContent = 'Nudge';
+  var pre = ensurePre(), fen = pre.fen;
+  pre.promise.then(function (an) {
+    if (S.game.fen() !== fen || S.selected !== sq || !an.moves.length) return;
+    var p = S.game.get(sq), mine = an.moves.filter(function (m) { return m.uci.slice(0, 2) === sq; });
+    $('btn-takeback').hidden = true; $('btn-explain').hidden = true;
+    if (!mine.length) { showCoach('This ' + NAME[p.type] + ' cannot move', 'It has no legal moves right now. Try another piece.'); return; }
+    var m = mine[0], best = an.moves[0], t = coachLevel() / 2.2;
+    var loss = clamp(best.score, -1500, 1500) - clamp(m.score, -1500, 1500);
+    var r = tryMove(fen, m.uci); if (!r) return;
+    var san = r.move.san, means = san + ' means ' + moveWords(r.move) + '. ', d = describe(fen, m.uci, m.reply);
+    var good = m.uci === best.uci || loss <= lerp(90, 25, t);
+    if (good) {
+      var extra = '';
+      if (m.reply) { var rep = tryMove(r.chess.fen(), m.reply); if (rep) extra = 'I expect the reply ' + rep.move.san + ' (' + moveWords(rep.move) + ').'; }
+      showCoach('Try ' + san, means + (sentence(d, 'It') || 'It improves your position without giving anything away.'), extra);
+      S.hintSquares = [r.move.to]; S.revealed[fen + '|' + m.uci] = true;
+    } else if (loss >= lerp(220, 100, t)) {
+      showCoach('Leave this ' + NAME[p.type] + ' for now', 'Its best move is ' + san + ' (' + moveWords(r.move) + '), and that gives something away. Another piece has a stronger move.');
+    } else {
+      showCoach(san + ' is playable', means + sentence(d, 'It'), 'Another piece has a slightly stronger move.');
+      S.hintSquares = [r.move.to];
+    }
+    S.feedback = { fen: fen, played: m.uci, playedSan: san, best: best.uci, bestSan: tryMove(fen, best.uci).move.san, an: an, hint: true };
+    $('btn-explain').hidden = !sampleFn;
+    render();
+  });
+}
+function nudgeLabel() {
+  var p = S.selected ? S.game.get(S.selected) : null;
+  $('btn-hint').textContent = p && canMoveNow() ? 'Best move for this ' + NAME[p.type]
+    : S.hintStage === 1 ? 'Show the move' : 'Nudge: which piece?';
+}
+function resetHint() { S.hintStage = 0; S.hintSquares = []; S.hintMove = null; S.touch = null; $('btn-hint').textContent = 'Nudge'; }
+
+/* ---------- optional: richer explanation written by Claude ---------- */
+var sampleFn = null, explaining = false;
+function onExplain() {
+  var fb = S.feedback; if (!fb || !sampleFn || explaining) return;
+  explaining = true;
+  var box = $('coach-ai'); box.hidden = false; box.textContent = 'Writing a longer explanation…';
+  var top = fb.an.moves.slice(0, 4).map(function (m) { var r = tryMove(fb.fen, m.uci); return (r ? r.move.san : m.uci) + ' (' + (m.score / 100).toFixed(1) + ')'; }).join(', ');
+  var prompt = 'You are a friendly chess coach talking to a beginner (level ' + S.level.toFixed(1) + ' on a 0 to 2 beginner scale). ' +
+    'Position (FEN): ' + fb.fen + '. ' +
+    (fb.alt ? 'The student\'s opponent played ' + fb.alt + ', and the student asks why the opponent did not play ' + fb.playedSan + ' instead.' : fb.opp ? 'The student\'s opponent just played ' + fb.playedSan + ', and the student wants to know why.' : fb.hint ? 'You are recommending the move ' + fb.playedSan + '.' : 'The student played ' + fb.playedSan + '.') +
+    ' A chess engine rates the top moves, in pawns for the side to move: ' + top + '. Its preferred move is ' + fb.bestSan + '. ' +
+    'In 3 or 4 short plain sentences, explain ' + (fb.alt ? 'how ' + fb.playedSan + ' compares with ' + fb.alt + ' and what would have followed' : fb.opp ? 'what the opponent\'s move does and whether it was a good move, without telling the student which move to play next' : fb.hint ? 'what this move achieves' : 'what the student\'s move does and, if it was not the best, what idea they missed') +
+    '. Trust the engine numbers over your own reading of the board. Name squares and pieces. No headings, no lists, no jargon without a quick definition.';
+  sampleFn(prompt, { modelTier: 'quick', onText: function (o) { box.textContent = o.text; } })
+    .then(function (r) { box.textContent = r.text; })
+    .catch(function (e) {
+      if (e && e.code === 'not_granted') { sampleFn = null; $('btn-explain').hidden = true; box.hidden = true; }
+      else box.textContent = 'The longer explanation is not available right now. Try again in a minute.';
+    })
+    .then(function () { explaining = false; });
+}
+
+/* ---------- coach: why did my opponent play that? ---------- */
+function explainOpponent() {
+  var hist = S.game.history({ verbose: true }); if (!hist.length) return;
+  var last = hist[hist.length - 1], u = last.from + last.to + (last.promotion || '');
+  var info = S.mode === 'cpu' && S.lastCpu && S.lastCpu.ply === hist.length ? S.lastCpu : null;
+  var who = S.mode === 'cpu' ? 'The computer' : 'Your opponent';
+  var d = describe(last.before, u, info ? info.reply : undefined);
+  var text = who + ' played ' + last.san + ' (' + moveWords(last) + '). ' + (sentence(d, 'It') || 'It is a quiet move with no immediate threat.');
+  var extra = '';
+  if (info && info.full) extra = 'This was a coach-strength reply, because you played my suggested move.';
+  else if (info && info.loss >= 150) extra = 'It was not a good move, though. At level ' + S.level.toFixed(1) + ' the computer makes mistakes like this on purpose, and this one gives you a chance. Look for it, or tap Nudge.';
+  else if (info && info.loss >= 60) extra = 'There was something a little better for it, so you have not lost any ground.';
+  else if (info && info.random) extra = 'The computer picked this one at random, which it often does at level ' + S.level.toFixed(1) + '. It happened to be a sound move.';
+  else if (info) extra = 'It was one of the best moves available.';
+  var title = 'Why ' + last.san + '?';
+  if (!info) {
+    // A person's move (or one made before this page was opened): check its quality now.
+    var ply = hist.length;
+    showCoach(title, text, 'Checking how good that move was.');
+    $('btn-takeback').hidden = true; $('btn-explain').hidden = true;
+    analyze(last.before, { maxDepth: 4, timeMs: 1000 }).then(function (an) {
+      if (S.game.history().length !== ply || $('coach-title').textContent !== title || !an.moves.length) return;
+      var played = null; an.moves.forEach(function (m) { if (m.uci === u) played = m; });
+      if (!played) { $('coach-extra').textContent = ''; $('coach-extra').hidden = true; return; }
+      var loss = clamp(an.moves[0].score, -1500, 1500) - clamp(played.score, -1500, 1500);
+      var d2 = describe(last.before, u, played.reply);
+      var v = loss >= 150 ? 'It was a mistake, and it gives you a chance. Look for it, or tap Nudge.'
+        : loss >= 60 ? 'There was something a little better, so you have not lost any ground.'
+        : 'It was one of the best moves available.';
+      showCoach(title, who + ' played ' + last.san + ' (' + moveWords(last) + '). ' + (sentence(d2, 'It') || 'It is a quiet move with no immediate threat.'), v);
+      S.feedback = { fen: last.before, played: u, playedSan: last.san, best: an.moves[0].uci, bestSan: tryMove(last.before, an.moves[0].uci).move.san, an: an, opp: true };
+      $('btn-explain').hidden = !sampleFn; $('btn-whynot').hidden = false;
+    });
+    $('btn-whynot').hidden = false;
+    return;
+  }
+  showCoach(title, text, extra);
+  $('btn-takeback').hidden = true; $('btn-whynot').hidden = false;
+  if (info && info.an) {
+    S.feedback = { fen: last.before, played: u, playedSan: last.san, best: info.an.moves[0].uci, bestSan: tryMove(last.before, info.an.moves[0].uci).move.san, an: info.an, opp: true };
+    $('btn-explain').hidden = !sampleFn;
+  } else $('btn-explain').hidden = true;
+}
+
+/* ---------- looking back through the game, and asking "why not this move?" ---------- */
+function exitWhyNot() { if (S.whyNot) { S.whyNot = null; render(); } }
+function sideNames(color) {
+  // Who made the move at this point, and who answers it, in words that fit the mode.
+  var mine = S.mode === 'cpu' ? S.myColor : S.mode === 'online' ? S.seat : null;
+  if (!mine) return { mover: colorName(color), replier: colorName(other(color)), isMe: false };
+  if (color === mine) return { mover: 'You', replier: S.mode === 'cpu' ? 'The computer' : 'Your opponent', isMe: true };
+  return { mover: S.mode === 'cpu' ? 'The computer' : 'Your opponent', replier: 'You', isMe: false };
+}
+function moveLabel(k, san) { return (Math.floor(k / 2) + 1) + (k % 2 === 0 ? '. ' : '... ') + san; }
+// Show the position before move number k (0-based). k at the end means the live game.
+function enterReview(k) {
+  var hist = S.game.history({ verbose: true }), n = hist.length; if (!n) return;
+  if (k >= n) { exitWhyNot(); showCoach('Back to the game', 'The board shows the live position again.'); return; }
+  k = Math.max(0, k);
+  var last = hist[k], u = last.from + last.to + (last.promotion || '');
+  var info = S.mode === 'cpu' && S.lastCpu && S.lastCpu.ply === k + 1 ? S.lastCpu : null;
+  var v = new Chess();
+  for (var i = 0; i < k; i++) v.move(parseUci(uciLog[i]));
+  if (!S.anCache[last.before]) S.anCache[last.before] = info ? Promise.resolve(info.an) : analyze(last.before, { maxDepth: 4, timeMs: 1000 });
+  S.selected = null; S.targets = []; S.hintSquares = []; S.hintStage = 0;
+  S.whyNot = { ply: n, k: k, last: last, u: u, info: info, view: v, sel: null, anP: S.anCache[last.before] };
+  showCoach('Before ' + moveLabel(k, last.san), 'Next came ' + last.san + ' (' + moveWords(last) + '). To ask why a different move was not played, tap a ' + colorName(last.color) + ' piece and then the square.');
+  $('btn-whynot').hidden = false; $('btn-takeback').hidden = true; $('btn-explain').hidden = true;
+  render();
+}
+function onWhyNot() { if (S.whyNot) enterReview(Infinity); else enterReview(S.game.history().length - 1); }
+function stepReview(delta, jump) {
+  var n = S.game.history().length; if (!n) return;
+  var cur = S.whyNot ? S.whyNot.k : n;
+  var k = jump === 'start' ? 0 : jump === 'live' ? n : cur + delta;
+  if (k < 0 || (k === cur && !jump)) return;
+  if (k >= n && !S.whyNot) return;
+  enterReview(k);
+}
+// Why a move is not allowed, in beginner terms.
+function illegalReason(c, from, to) {
+  var p = c.get(from), t = c.get(to), fx = from.charCodeAt(0), fy = +from[1], tx = to.charCodeAt(0), ty = +to[1];
+  var dx = tx - fx, dy = ty - fy, ax = Math.abs(dx), ay = Math.abs(dy), n = NAME[p.type];
+  if (t && t.color === p.color) return 'A piece of the same color is already on ' + to + '.';
+  var shape = p.type === 'n' ? (ax * ay === 2) : p.type === 'b' ? (ax === ay) : p.type === 'r' ? (ax === 0 || ay === 0)
+    : p.type === 'q' ? (ax === ay || ax === 0 || ay === 0) : p.type === 'k' ? (ax <= 1 && ay <= 1) : true;
+  if (p.type === 'p') {
+    var dir = p.color === 'w' ? 1 : -1, start = p.color === 'w' ? 2 : 7;
+    if (ax === 0 && (dy === dir || (dy === 2 * dir && fy === start))) {
+      if (t || (dy === 2 * dir && c.get(from[0] + (fy + dir)))) return 'The pawn is blocked. Pawns cannot capture or jump straight ahead.';
+    } else if (ax === 1 && dy === dir) { if (!t) return 'A pawn only moves diagonally when it captures, and ' + to + ' was empty.'; }
+    else return 'A pawn does not move that way. It goes straight ahead and captures one square diagonally.';
+  } else if (!shape) {
+    if (p.type === 'k' && ax === 2 && ay === 0) return 'Castling was not allowed here. The king or rook had moved, a piece was in the way, or the king would pass through check.';
+    return 'A ' + n + ' does not move that way.';
+  } else if (p.type !== 'n' && p.type !== 'k') {
+    var sx = Math.sign(dx), sy = Math.sign(dy), x = fx + sx, y = fy + sy;
+    while (x !== tx || y !== ty) { if (c.get(String.fromCharCode(x) + y)) return 'Another piece on ' + String.fromCharCode(x) + y + ' was in the way.'; x += sx; y += sy; }
+  }
+  return c.isCheck() ? 'The king was in check, and this move would not have dealt with it.' : 'It would have left that side\'s own king in check, which is never allowed.';
+}
+function onWhyNotSquare(sq) {
+  var W = S.whyNot, v = W.view, p = v.get(sq);
+  if (!W.sel) {
+    if (p && p.color === v.turn()) { W.sel = sq; render(); }
+    else { showCoach('Before ' + moveLabel(W.k, W.last.san), 'Tap one of the ' + colorName(v.turn()) + ' pieces first. That is the side that was about to move.'); $('btn-whynot').hidden = false; }
+    return;
+  }
+  if (sq === W.sel) { W.sel = null; render(); return; }
+  if (p && p.color === v.turn()) { W.sel = sq; render(); return; }
+  var from = W.sel, legal = v.moves({ square: from, verbose: true }).filter(function (m) { return m.to === sq; });
+  W.sel = null;
+  if (!legal.length) {
+    var piece = v.get(from), why = illegalReason(v, from, sq);
+    render();
+    showCoach('That move was not possible', 'The ' + NAME[piece.type] + ' on ' + from + ' could not go to ' + sq + '. ' + why);
+    $('btn-whynot').hidden = false; return;
+  }
+  answerWhyNot(W, from + sq + (legal[0].promotion ? 'q' : ''));
+}
+function answerWhyNot(W, altUci) {
+  var before = W.last.before;
+  showCoach('Checking that move', 'One moment.'); $('btn-whynot').hidden = false;
+  render();
+  W.anP.then(function (an) {
+    if (S.whyNot !== W || S.game.history().length !== W.ply) return;
+    var alt = null, played = null;
+    an.moves.forEach(function (m) { if (m.uci === altUci) alt = m; if (m.uci === W.u) played = m; });
+    var r = tryMove(before, altUci);
+    if (!alt || !played || !r) { showCoach('I could not check that move', 'Try asking again.'); $('btn-whynot').hidden = false; return; }
+    var san = r.move.san, who = sideNames(W.last.color);
+    if (altUci === W.u) { showCoach('That is the move that was played', san + ' is the move ' + who.mover.toLowerCase() + ' chose here.'); $('btn-whynot').hidden = false; return; }
+    var cap = function (x) { return clamp(x, -1500, 1500); }, diff = cap(alt.score) - cap(played.score);
+    var d = describe(before, altUci, alt.reply), does = sentence(d, 'It') || 'It is a quiet move with no immediate threat.';
+    var rep = alt.reply ? tryMove(r.chess.fen(), alt.reply) : null;
+    var text = san + ' means ' + moveWords(r.move) + '. ', extra = '';
+    if (diff <= -150) {
+      text += 'It would have been worse than ' + W.last.san + '.';
+      if (alt.score <= -(MATE - 50)) extra = rep && rep.chess.isCheckmate() ? who.replier + ' could have answered ' + rep.move.san + ' (' + moveWords(rep.move) + ').' : 'It would have allowed a forced checkmate.';
+      else if (rep && rep.move.captured) extra = who.replier + ' could have answered ' + rep.move.san + ' (' + moveWords(rep.move) + ') and come out ahead.';
+      else if (rep) extra = who.replier + ' would have had the better position after ' + rep.move.san + ' (' + moveWords(rep.move) + ').';
+    } else if (diff < -40) { text += does; extra = 'It was playable, only a little weaker than ' + W.last.san + '.'; }
+    else if (diff <= 40) { text += does; extra = 'It was about as good as ' + W.last.san + '. Either move was fine.'; }
+    else {
+      text += does;
+      extra = (diff >= 150 ? 'You are right, it was clearly better than ' : 'It was a little better than ') + W.last.san + '. ';
+      if (who.isMe) extra += 'Worth remembering for next time.';
+      else if (W.info && W.info.random) extra += 'The computer picked its move at random.';
+      else if (W.info && !W.info.full) extra += 'At level ' + S.level.toFixed(1) + ' the computer misses moves like this on purpose.';
+      else extra += who.mover + ' missed it.';
+    }
+    showCoach('Why not ' + san + '?', text, extra);
+    $('btn-whynot').hidden = false; $('btn-takeback').hidden = true;
+    S.feedback = { fen: before, played: altUci, playedSan: san, best: an.moves[0].uci, bestSan: tryMove(before, an.moves[0].uci).move.san, an: an, alt: W.last.san };
+    $('btn-explain').hidden = !sampleFn;
+  });
+}
+
+/* ---------- moving ---------- */
+function onSquare(sq) {
+  if (!canMoveNow()) return;
+  var g = S.game, p = g.get(sq);
+  if (S.selected && S.targets.indexOf(sq) >= 0) {
+    var mover = g.get(S.selected), lastRank = sq[1] === '8' || sq[1] === '1';
+    if (mover.type === 'p' && lastRank) { S.promo = { from: S.selected, to: sq }; S.targets = []; render(); return; }
+    playerMove(S.selected + sq); return;
+  }
+  if (p && p.color !== g.turn() && !S.selected) { explainOpponent(); return; }
+  if (S.selected === sq) { S.selected = null; S.targets = []; S.hintSquares = []; S.hintStage = 0; render(); return; }   // tap again to let go
+  if (p && p.color === g.turn()) {
+    S.selected = sq;
+    S.targets = g.moves({ square: sq, verbose: true }).map(function (m) { return m.to; });
+    S.touch = null; if (S.hintStage === 0) S.hintSquares = [];
+  } else { S.selected = null; S.targets = []; S.hintSquares = []; S.touch = null; if (p) explainOpponent(); }
+  render();
+}
+function playerMove(u) {
+  var g = S.game, fen = g.fen(), pre = ensurePre(), lenBefore = g.history().length;
+  try { g.move(parseUci(u)); } catch (e) { S.selected = null; S.targets = []; S.promo = null; render(); return; }
+  uciLog.push(u);
+  // Playing the move the coach revealed earns a full-strength reply from the computer.
+  var hinted = !!S.revealed[fen + '|' + u];   // any move the coach showed this turn, however you got back to it
+  S.selected = null; S.targets = []; S.promo = null; resetHint(); S.pre = null;
+  S.undoTo = lenBefore;
+  $('btn-takeback').hidden = true; $('btn-explain').hidden = true;
+  render();
+  var canTB = S.mode !== 'online';
+  if (S.coachOn) {
+    pre.promise.then(function (an) {
+      if (S.game.history().length < lenBefore + 1 || uciLog[lenBefore] !== u) return;
+      var fb = judge(fen, u, an, canTB);
+      if (fb && hinted && S.mode === 'cpu') fb.after = 'You used my move, so the computer answers this one at coach strength.';
+      if (fb && !S.game.isGameOver()) showFeedback(fb);
+      else if (fb) { showFeedback(fb); afterGameOver(); }
+    });
+  }
+  afterMove(hinted);
+  if (S.mode === 'online') online.send(); else saveGame();
+}
+function afterMove(hinted) {
+  if (S.game.isGameOver()) { afterGameOver(); return; }
+  if (S.mode === 'cpu' && S.game.turn() !== S.myColor) cpuMove(hinted);
+  else if (canMoveNow() || S.mode === 'local') ensurePre();
+}
+function afterGameOver() {
+  renderStatus();
+  $('btn-takeback').hidden = true;
+  var g = S.game, extra = '';
+  if (S.mode === 'cpu' && !S.gameCounted) {
+    S.gameCounted = true;
+    var won = g.isCheckmate() && g.turn() !== S.myColor, lost = g.isCheckmate() && g.turn() === S.myColor;
+    if (S.auto && (won || lost)) {
+      var nl = roundLevel(S.level + (won ? 0.1 : -0.1));
+      if (nl !== S.level) { extra = 'Your level moves ' + (won ? 'up' : 'down') + ' to ' + nl.toFixed(1) + ' for the next game.'; setLevel(nl); }
+    }
+    S.endNote = (won ? 'You won. Nicely done. ' : lost ? 'The computer won this one. ' : 'A draw. ') + extra;
+  } else if (S.mode !== 'cpu') S.endNote = '';
+  var el = $('coach-after');
+  var note = resultText() + '. ' + (S.endNote || '');
+  el.hidden = false; el.textContent = note.trim();
+}
+
+/* ---------- computer opponent, weakened to your level ---------- */
+function cpuMove(full) {
+  var token = ++S.cpuToken, fen = S.game.fen(), L = S.level, s = L / 2;
+  renderStatus();
+  var depth = full ? 4 : L < 0.5 ? 2 : L < 1.3 ? 3 : 4;
+  var started = Date.now();
+  analyze(fen, { maxDepth: depth, timeMs: full ? 1200 : 500 }).then(function (an) {
+    if (token !== S.cpuToken || S.game.fen() !== fen || !an.moves.length) return;
+    var list = an.moves, best = list[0], choice;
+    var pRandom = Math.pow(1 - s, 3);                 // 1.0 at level 0, 0.13 at 1.0, 0 at 2.0
+    var wasRandom = false;
+    if (full) choice = best;
+    else if (Math.random() < pRandom) { choice = list[Math.floor(Math.random() * list.length)]; wasRandom = true; }
+    else {
+      var margin = lerp(350, 40, s), pool = [], total = 0;
+      list.forEach(function (m) {
+        var loss = clamp(best.score, -1500, 1500) - clamp(m.score, -1500, 1500);
+        if (best.score >= MATE - 50 && m.score < MATE - 50 && L >= 0.5) return;
+        if (loss <= margin) { var w = Math.exp(-loss / (margin / 2)); pool.push([m, w]); total += w; }
+      });
+      var r = Math.random() * total; choice = pool[0][0];
+      for (var i = 0; i < pool.length; i++) { r -= pool[i][1]; if (r <= 0) { choice = pool[i][0]; break; } }
+    }
+    var wait = Math.max(0, 650 - (Date.now() - started));
+    setTimeout(function () {
+      if (token !== S.cpuToken || S.game.fen() !== fen) return;
+      try { S.game.move(parseUci(choice.uci)); } catch (e) { return; }
+      uciLog.push(choice.uci); S.whyNot = null;
+      S.lastCpu = { ply: uciLog.length, an: an, reply: choice.reply, full: !!full, random: wasRandom,
+        loss: clamp(best.score, -1500, 1500) - clamp(choice.score, -1500, 1500) };
+      saveGame();
+      render();
+      if (S.game.isGameOver()) afterGameOver(); else ensurePre();
+    }, wait);
+  });
+}
+
+/* ---------- take back ---------- */
+function onTakeBack() {
+  if (S.undoTo === null || S.mode === 'online') return;
+  S.cpuToken++;
+  S.whyNot = null; S.anCache = {};
+  while (S.game.history().length > S.undoTo) { S.game.undo(); uciLog.pop(); }
+  S.undoTo = null; S.pre = null; S.gameCounted = false; resetHint();
+  showCoach('Have another look', 'Check which of your pieces are attacked, and what you could capture, before you choose.');
+  $('btn-takeback').hidden = true; $('btn-explain').hidden = true;
+  render(); ensurePre(); saveGame();
+}
+
+/* ---------- new game / modes ---------- */
+function freshGame() {
+  S.cpuToken++;
+  S.game = new Chess(); uciLog = []; S.revealed = {}; S.whyNot = null; S.anCache = {};
+  S.selected = null; S.targets = []; S.promo = null; S.pre = null; S.feedback = null; S.undoTo = null; S.lastCpu = null; S.gameCounted = false; S.endNote = '';
+  resetHint();
+  $('btn-takeback').hidden = true; $('btn-explain').hidden = true;
+}
+function newCpuGame() {
+  freshGame();
+  showCoach('Ready when you are', S.myColor === 'w'
+    ? 'Pick your move and play it. I\'ll tell you whether it was right and why. If you want help, tap Nudge: with a piece selected I show that piece\'s best move, otherwise I point you to a piece. Tap a selected piece again to let go of it. Tap an opponent piece to ask why the last move was played. Use Back and Forward under the board to step through the game.'
+    : 'You have Black, so the computer moves first. After each of your moves I\'ll tell you what it did well or what it gave away.');
+  render();
+  if (S.myColor === 'b') cpuMove(); else ensurePre();
+  saveGame();
+}
+function setMode(m) {
+  S.mode = m;
+  ['cpu', 'online', 'local'].forEach(function (k) { $('tab-' + k).setAttribute('aria-selected', String(k === m)); });
+  $('panel-online').hidden = m !== 'online';
+  $('cpu-controls').hidden = m === 'online';
+  $('cpu-color').hidden = m !== 'cpu'; $('cpu-color').previousElementSibling.hidden = m !== 'cpu';
+  $('auto-wrap').hidden = m !== 'cpu';
+  if (m !== 'online') online.leave(true);
+  if (m === 'cpu') newCpuGame();
+  else if (m === 'local') {
+    freshGame(); S.myColor = 'w';
+    showCoach('Two players, one screen', 'Take turns on this device. I\'ll comment on each move for whoever just played.');
+    render(); ensurePre();
+  } else {
+    freshGame(); render();
+    showCoach('Play a person online', 'Create a game or join one with a code. I\'ll coach only you: your opponent does not see my comments on your moves.');
+    online.init();
+  }
+  renderLevel(); saveGame();
+}
+
+/* ---------- level ---------- */
+function levelText(L) {
+  if (L === 0) return 'The computer moves at random. A good place to learn how the pieces move.';
+  if (L < 0.5) return 'The computer blunders most of the time and rarely notices free pieces.';
+  if (L < 1.0) return 'The computer still gives pieces away often, but takes some of what you leave hanging.';
+  if (L < 1.5) return 'The computer blunders now and then and usually takes free pieces.';
+  if (L < 2.0) return 'The computer rarely gives pieces away and punishes most loose pieces.';
+  return 'The computer plays like a steady casual player: no free gifts, but it misses deeper plans.';
+}
+function renderLevel() {
+  $('level').value = S.level; $('level-out').textContent = S.level.toFixed(1);
+  $('level-desc').textContent = S.mode === 'cpu' ? levelText(S.level) : 'Sets how strict I am with your moves and how advanced my hints are.';
+  $('coach-level').textContent = 'looks 2 moves ahead';
+  renderStatus();
+}
+function setLevel(L) { S.level = roundLevel(L); store.set('level', S.level); renderLevel(); saveGame(); }
+
+/* ---------- online play (shared game stored with the page) ---------- */
+var online = {
+  db: null, user: null, ready: false, joined: false, autoJoin: null, canWrite: true, code: null, ref: null, unsub: null,
+  myId: null, writing: false, color: 'w', loadTimer: null, data: null,
+  err: function (msg) { var e = $('online-err'); e.hidden = !msg; e.textContent = msg || ''; },
+  init: function () {
+    var self = this; self.err('');
+    if (self.ready) { self.offerRejoin(); return; }
+    services().then(function (sv) {
+      if (!sv.db) { self.unavailable(); return; }
+      self.db = sv.db; self.user = sv.user; self.myId = sv.realId;
+      if (!self.myId) { self.myId = store.get('guestId', null); if (!self.myId) { self.myId = 'guest-' + Math.random().toString(36).slice(2, 10); store.set('guestId', self.myId); } }
+      self.canWrite = sv.canWrite; self.ready = true;
+      if (!self.canWrite) self.err('You can watch games here, but your access to this page does not allow moving. Ask the owner for access that lets you make changes.');
+      self.offerRejoin();
+      if (self.autoJoin && S.mode === 'online' && !self.joined) { $('join-code').value = self.autoJoin; self.autoJoin = null; self.join(); }
+    });
+  },
+  unavailable: function () {
+    this.err(window.CHESS_STANDALONE ? 'Online play is not set up yet. Add your Supabase address and public key to config.js, or use the Same device tab.' : 'Online play is not available in this view. Open the page while signed in to Claude, or use the Same device tab.');
+  },
+  offerRejoin: function () { var c = store.get('lastCode', ''); if (c && !$('join-code').value) $('join-code').value = c; },
+  newCode: function () { var a = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789', s = ''; for (var i = 0; i < 4; i++) s += a[Math.floor(Math.random() * a.length)]; return s; },
+  create: function () {
+    var self = this; if (!self.ready || !self.db) { self.init(); return; }
+    if (!self.canWrite) return;
+    var code = self.newCode(), ref = self.db.doc('games/' + code);
+    var body = { white: self.color === 'w' ? self.myId : null, black: self.color === 'b' ? self.myId : null, moves: [], created: Date.now(), updated: Date.now() };
+    self.err('');
+    ref.set(body).then(function () { self.enter(code, ref); })
+      .catch(function (e) { self.err(e && e.code === 'invalid_argument' ? 'Your access to this page does not allow starting a game. Ask the owner to share it with you as a Contributor.' : 'Could not create the game. Check your connection and try again.'); });
+  },
+  join: function () {
+    var self = this; if (!self.ready || !self.db) { self.init(); return; }
+    var code = $('join-code').value.trim().toUpperCase();
+    if (!/^[A-Z0-9]{4}$/.test(code)) { self.err('Enter the 4-character game code.'); return; }
+    var ref = self.db.doc('games/' + code); self.err('');
+    ref.get().then(function (snap) {
+      if (!snap.exists) { self.err('No game found with code ' + code + '. Check the code with your opponent.'); return; }
+      var d = snap.data() || {};
+      if (d.white === self.myId || d.black === self.myId || !self.canWrite) { self.enter(code, ref); return; }
+      var patch = null;
+      if (!d.white) patch = { white: self.myId }; else if (!d.black) patch = { black: self.myId };
+      if (!patch) { self.enter(code, ref); return; }
+      return ref.update(patch).then(function () { self.enter(code, ref); });
+    }).catch(function () { self.err('Could not join the game. Check your connection and try again.'); });
+  },
+  enter: function (code, ref) {
+    var self = this;
+    self.code = code; self.ref = ref; self.joined = true; store.set('lastCode', code); saveGame();
+    $('online-lobby').hidden = true; $('online-game').hidden = false; $('online-code').textContent = code;
+    $('online-info').textContent = 'Connecting…';
+    freshGame(); render();
+    self.loadTimer = setTimeout(function () { $('online-info').textContent = 'The game cannot be reached yet. Still trying.'; }, 10000);
+    self.unsub = ref.onSnapshot(function (snap) {
+      if (!snap.metadata || !snap.metadata.fromCache) { clearTimeout(self.loadTimer); }
+      if (!snap.exists) { $('online-info').textContent = 'This game no longer exists.'; return; }
+      self.apply(snap.data() || {});
+    }, function () { clearTimeout(self.loadTimer); self.err('Lost the connection to this game. Leave and join again with the code.'); });
+  },
+  apply: function (d) {
+    var self = this; self.data = d;
+    S.seat = d.white === self.myId ? 'w' : d.black === self.myId ? 'b' : null;
+    S.myColor = S.seat || 'w';
+    var both = d.white && d.black;
+    $('online-info').textContent = !S.seat ? 'Both seats are taken. You are watching.'
+      : both ? 'You are ' + colorName(S.seat) + '. Your opponent has joined.'
+      : 'You are ' + colorName(S.seat) + '. Waiting for your opponent to join with this code.';
+    var remote = Array.isArray(d.moves) ? d.moves.filter(function (x) { return typeof x === 'string'; }) : [];
+    var same = remote.length === uciLog.length && remote.every(function (m, i) { return m === uciLog[i]; });
+    if (!same) {
+      var isPrefix = remote.length < uciLog.length && remote.every(function (m, i) { return m === uciLog[i]; });
+      if (isPrefix && self.writing) { render(); return; }      // my own move is still on its way
+      var g = new Chess(), ok = true;
+      for (var i = 0; i < remote.length; i++) { try { g.move(parseUci(remote[i])); } catch (e) { ok = false; break; } }
+      if (!ok) { self.err('The saved game has a move that is not legal, so it was not loaded.'); return; }
+      var grew = remote.length > uciLog.length;
+      S.game = g; uciLog = remote.slice(); S.whyNot = null; S.selected = null; S.targets = []; S.promo = null; S.pre = null; resetHint();
+      if (!grew) { S.feedback = null; showCoach('Game restarted', 'The board is back at the starting position.'); $('btn-takeback').hidden = true; $('btn-explain').hidden = true; }
+    }
+    render();
+    if (S.game.isGameOver()) afterGameOver(); else if (canMoveNow()) ensurePre();
+  },
+  send: function () {
+    var self = this; if (!self.ref) return;
+    var moves = uciLog.slice(); self.writing = true; S.busy = false;
+    self.ref.update({ moves: moves, updated: Date.now() }).then(function () { self.writing = false; self.err(''); })
+      .catch(function () {
+        self.writing = false;
+        self.err('Your move did not reach the other player. Check your connection; the board will resync when it returns.');
+        if (self.data) { uciLog = []; S.game = new Chess(); self.apply(self.data); }
+      });
+  },
+  rematch: function () {
+    var self = this; if (!self.ref || !S.seat) return;
+    self.ref.update({ moves: [], updated: Date.now() }).catch(function () { self.err('Could not restart the game.'); });
+  },
+  leave: function (silent) {
+    if (this.unsub) { try { this.unsub(); } catch (e) {} }
+    clearTimeout(this.loadTimer);
+    this.unsub = null; this.ref = null; this.joined = false; this.code = null; this.data = null; S.seat = 'w';
+    $('online-lobby').hidden = false; $('online-game').hidden = true; this.err('');
+    if (!silent) { freshGame(); S.myColor = 'w'; render(); showCoach('Play a person online', 'Create a game or join one with a code.'); saveGame(); }
+  }
+};
+
+/* ---------- wiring ---------- */
+$('board').addEventListener('click', function (ev) {
+  var pb = ev.target.closest('[data-promo]');
+  if (pb && S.promo) { var u = S.promo.from + S.promo.to + pb.dataset.promo; playerMove(u); return; }
+  if (S.promo) { S.promo = null; S.selected = null; render(); return; }
+  var el = ev.target.closest('.sq'); if (!el) return;
+  if (S.whyNot) onWhyNotSquare(el.dataset.sq); else onSquare(el.dataset.sq);
+});
+$('btn-whynot').addEventListener('click', onWhyNot);
+$('nav-start').addEventListener('click', function () { stepReview(0, 'start'); });
+$('nav-back').addEventListener('click', function () { stepReview(-1); });
+$('nav-fwd').addEventListener('click', function () { stepReview(1); });
+$('nav-live').addEventListener('click', function () { stepReview(0, 'live'); });
+document.addEventListener('keydown', function (ev) {
+  if (ev.target && /^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName)) return;
+  if (ev.key === 'ArrowLeft') stepReview(-1); else if (ev.key === 'ArrowRight') stepReview(1);
+});
+$('btn-hint').addEventListener('click', function () { exitWhyNot(); if (S.selected && canMoveNow()) touchSuggest(S.selected); else onHint(); });
+$('btn-takeback').addEventListener('click', onTakeBack);
+$('btn-explain').addEventListener('click', onExplain);
+$('btn-new').addEventListener('click', function () { if (S.mode === 'cpu') newCpuGame(); else setMode('local'); });
+$('level').addEventListener('input', function () { setLevel(parseFloat(this.value)); });
+$('auto').checked = S.auto; $('coach-on').checked = S.coachOn;
+$('auto').addEventListener('change', function () { S.auto = this.checked; store.set('auto', S.auto); });
+$('coach-on').addEventListener('change', function () { S.coachOn = this.checked; store.set('coachOn', S.coachOn); });
+function seg(id, cb) {
+  $(id).addEventListener('click', function (ev) {
+    var b = ev.target.closest('button'); if (!b) return;
+    Array.prototype.forEach.call(this.querySelectorAll('button'), function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+    cb(b.dataset.c);
+  });
+}
+seg('cpu-color', function (c) { S.myColor = c; newCpuGame(); });
+seg('online-color', function (c) { online.color = c; });
+['cpu', 'online', 'local'].forEach(function (m) { $('tab-' + m).addEventListener('click', function () { if (S.mode !== m) setMode(m); }); });
+$('btn-create').addEventListener('click', function () { online.create(); });
+$('btn-join').addEventListener('click', function () { online.join(); });
+$('btn-rematch').addEventListener('click', function () { online.rematch(); });
+$('btn-leave').addEventListener('click', function () { online.leave(false); });
+
+if (window.claude && window.claude.use) {
+  window.claude.use('sample').then(function (s) { sampleFn = s || null; if (sampleFn && S.feedback) $('btn-explain').hidden = false; }).catch(function () {});
+}
+renderLevel();
+if (!applySaved(store.get('game', null))) newCpuGame();
+S.touched = false;
+services().then(function (sv) {
+  if (!sv.db || !sv.realId || !sv.canWrite) return;
+  saver.ref = sv.db.doc('data/users/' + sv.realId + '/chessgame');
+  saver.ref.get().then(function (snap) {
+    var here = store.get('game', null), d = snap.exists ? snap.data() : null;
+    // Use the stored copy when this browser has none, or when another device played more recently.
+    if (d && !S.touched && (!here || (d.t || 0) > (here.t || 0))) { if (applySaved(d)) store.set('game', d); }
+    else if (here) pushSave(here);
+  }).catch(function () {});
+});
+})();
+</script>
+</body>
+</html>
