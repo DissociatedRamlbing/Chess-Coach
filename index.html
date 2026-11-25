@@ -228,7 +228,7 @@ var GLYPH = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
 var NAME = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
 var VAL = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
 var MATE = 100000;
-var BUILD = 'b15';   // raise by one with every release
+var BUILD = 'b16';   // raise by one with every release
 
 /* ---------- small helpers ---------- */
 var store = {
@@ -706,10 +706,10 @@ function showFeedback(fb) {
 }
 
 /* ---------- coach: hints ---------- */
-// The coach suggests a move a player slightly above your level would find:
-// sound according to the engine, and as easy to understand as possible.
+// The coach suggests the engine's best move. Only moves the verdict would also call "Best"
+// (within 10 points of the top score) can stand in for it, and among those the easiest to explain wins.
 function pickCoachMove(fen, an) {
-  var best = an.moves[0], t = coachLevel() / 2.2, tol = lerp(90, 25, t), pick = best, top = -1;
+  var best = an.moves[0], tol = 10, pick = best, top = -1;
   an.moves.forEach(function (m) {
     if (best.score - m.score > tol && m.uci !== best.uci) return;
     if (best.score >= MATE - 50 && m.score < MATE - 50) return;
@@ -765,7 +765,7 @@ function touchSuggest(sq) {
     var loss = clamp(best.score, -1500, 1500) - clamp(m.score, -1500, 1500);
     var r = tryMove(fen, m.uci); if (!r) return;
     var san = r.move.san, means = san + ' means ' + moveWords(r.move) + '. ', d = describe(fen, m.uci, m.reply);
-    var good = m.uci === best.uci || loss <= lerp(90, 25, t);
+    var good = m.uci === best.uci || loss <= 20;   // the same band the verdict calls Good
     if (good) {
       var extra = '';
       if (m.reply) { var rep = tryMove(r.chess.fen(), m.reply); if (rep) extra = 'I expect the reply ' + rep.move.san + ' (' + moveWords(rep.move) + ').'; }
