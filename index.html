@@ -228,7 +228,7 @@ var GLYPH = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
 var NAME = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
 var VAL = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
 var MATE = 100000;
-var BUILD = 'b16';   // raise by one with every release
+var BUILD = 'b17';   // raise by one with every release
 
 /* ---------- small helpers ---------- */
 var store = {
@@ -1017,6 +1017,50 @@ function onWhyNotSquare(sq) {
   }
   answerWhyNot(W, from + sq + (legal[0].promotion ? 'q' : ''));
 }
+function setOptions(lines) {
+  var ul = $('coach-options'); ul.textContent = ''; ul.hidden = !lines.length;
+  lines.forEach(function (t) { var li = document.createElement('li'); li.textContent = t; ul.appendChild(li); });
+  $('coach-extra').classList.toggle('lead', !!lines.length);
+}
+// Asked about the move that was actually played: why this one, compared with the other choices.
+function explainPlayed(W, an, r, played, who) {
+  var fen = W.last.before, san = r.move.san, cap = function (x) { return clamp(x, -1500, 1500); };
+  var best = an.moves[0], loss = cap(best.score) - cap(played.score);
+  var d = describe(fen, W.u, played.reply);
+  var text = who.mover + ' played ' + san + ' (' + moveWords(r.move) + '). ' + (sentence(d, 'It') || 'It is a safe waiting move: every piece stays protected and nothing is given away, but it creates no new threat.');
+  var stronger = an.moves.filter(function (m) { return m.uci !== W.u && cap(m.score) - cap(played.score) > 20; }).length;
+  var verdict;
+  if (loss <= 10) verdict = 'It was the strongest move available.';
+  else if (loss <= 20) verdict = 'It was as good as anything else available.';
+  else verdict = stronger + (stronger === 1 ? ' other move was' : ' other moves were') + ' stronger, so it was not the best choice.';
+  if (W.info) {
+    if (W.info.full) verdict += ' The computer chose it at coach strength, because you had played my suggested move.';
+    else if (W.info.random) verdict += ' The computer picked it at random, which it often does at level ' + S.level.toFixed(1) + '.';
+    else if (loss > 20) verdict += ' At level ' + S.level.toFixed(1) + ' the computer passes up stronger moves on purpose.';
+    else verdict += ' The computer chose it because it was among the best moves it found.';
+  }
+  // The other choices: the strongest alternatives, each with what it does and how it compares.
+  var lines = [];
+  an.moves.forEach(function (m) {
+    if (lines.length >= 3 || m.uci === W.u) return;
+    var x = tryMove(fen, m.uci); if (!x) return;
+    var diff = cap(m.score) - cap(played.score), pts = Math.round(Math.abs(diff) / 100);
+    var does = describe(fen, m.uci, m.reply), cmp;
+    if (diff > 20) cmp = diff >= 150 ? 'Stronger by about ' + pts + (pts === 1 ? ' point' : ' points') : 'A little stronger';
+    else if (diff >= -20) cmp = 'Just as good';
+    else if (diff > -150) cmp = 'A little weaker';
+    else {
+      var rep = m.reply ? tryMove(x.chess.fen(), m.reply) : null;
+      cmp = 'Worse by about ' + pts + (pts === 1 ? ' point' : ' points') + (rep ? ' after the reply ' + rep.move.san : '');
+    }
+    lines.push(x.move.san + ' (' + moveWords(x.move) + '): ' + (does.length ? does.join(', ') : 'a safe waiting move') + '. ' + cmp + '.');
+  });
+  showCoach('Why ' + san + '?', text, verdict + (lines.length ? ' The main other choices:' : ''));
+  setOptions(lines);
+  $('btn-whynot').hidden = false; $('btn-takeback').hidden = true;
+  S.feedback = { fen: fen, played: W.u, playedSan: san, best: best.uci, bestSan: tryMove(fen, best.uci).move.san, an: an, opp: !who.isMe && S.mode !== 'local' };
+  $('btn-explain').hidden = !sampleFn;
+}
 function answerWhyNot(W, altUci) {
   var before = W.last.before;
   showCoach('Checking that move', 'One moment.'); $('btn-whynot').hidden = false;
@@ -1028,7 +1072,7 @@ function answerWhyNot(W, altUci) {
     var r = tryMove(before, altUci);
     if (!alt || !played || !r) { showCoach('I could not check that move', 'Try asking again.'); $('btn-whynot').hidden = false; return; }
     var san = r.move.san, who = sideNames(W.last.color);
-    if (altUci === W.u) { showCoach('That is the move that was played', san + ' is the move ' + who.mover.toLowerCase() + ' chose here.'); $('btn-whynot').hidden = false; return; }
+    if (altUci === W.u) { explainPlayed(W, an, r, played, who); return; }
     var cap = function (x) { return clamp(x, -1500, 1500); }, diff = cap(alt.score) - cap(played.score);
     var d = describe(before, altUci, alt.reply), does = sentence(d, 'It') || 'It is a safe waiting move: every piece stays protected and nothing is given away, but it creates no new threat.';
     var rep = alt.reply ? tryMove(r.chess.fen(), alt.reply) : null;
