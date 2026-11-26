@@ -64,6 +64,8 @@ h1 { font-family: var(--font-display); font-weight: 800; font-size: 1.6rem; marg
   border-radius: 8px; overflow: hidden; border: 2px solid var(--ink); user-select: none; -webkit-user-select: none; touch-action: manipulation; }
 .sq { position: relative; border: 0; padding: 0; margin: 0; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 0;
   font-family: var(--font-piece); font-size: calc(var(--board-w) / 8 * 0.78); line-height: 1; -webkit-tap-highlight-color: transparent; }
+.goal { margin: 0; padding: 7px 10px; min-height: 3.5em; font-size: 0.92rem; line-height: 1.35; background: var(--accent-soft); border-left: 4px solid var(--accent); border-radius: 6px; }
+.goal b { color: var(--accent); }
 .board.rewind { outline: 4px dashed var(--accent); outline-offset: 3px; }
 .sq.l { background: var(--board-light); } .sq.d { background: var(--board-dark); }
 .sq .pc.w { color: #fdfdfb; text-shadow: 0 0 1px #10161f, 1px 1px 0 #10161f, -1px 1px 0 #10161f, 1px -1px 0 #10161f, -1px -1px 0 #10161f, 0 2px 2px rgba(0,0,0,.35); }
@@ -142,6 +144,7 @@ input.code { border: 1.5px solid var(--ink); background: var(--surface); border-
         <div class="turn"><span class="dot w" id="turn-dot"></span><span id="turn-text">White to move</span></div>
         <div class="sub" id="status-sub"></div>
       </div>
+      <p class="goal" id="goal" aria-live="polite" hidden><b>Goal this turn:</b> <span id="goal-text"></span></p>
       <div class="board" id="board" aria-label="Chess board"></div>
       <div class="nav" role="group" aria-label="Step through the game">
         <button class="btn" id="nav-start">Start here</button>
@@ -203,7 +206,7 @@ input.code { border: 1.5px solid var(--ink); background: var(--surface); border-
         </div>
         <p class="hintline" id="level-desc"></p>
         <label class="check" id="auto-wrap"><input type="checkbox" id="auto" checked> Move my level up after a win and down after a loss</label>
-        <label class="check"><input type="checkbox" id="coach-on" checked> Coach comments after I move</label>
+        <label class="check"><input type="checkbox" id="coach-on" checked> Coach sets a goal each turn and comments after I move</label>
         <div class="row" id="cpu-controls">
           <span>I play</span>
           <div class="seg" id="cpu-color"><button aria-pressed="true" data-c="w">White</button><button aria-pressed="false" data-c="b">Black</button></div>
@@ -228,7 +231,7 @@ var GLYPH = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
 var NAME = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
 var VAL = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
 var MATE = 100000;
-var BUILD = 'b17';   // raise by one with every release
+var BUILD = 'b18';   // raise by one with every release
 
 /* ---------- small helpers ---------- */
 var store = {
@@ -347,7 +350,7 @@ var S = {
   feedback: null,         // last coach verdict
   undoTo: null,           // history length to return to on take-back
   cpuToken: 0, gameCounted: false, busy: false,
-  hintStage: 0, hintMove: null, revealed: {}, whyNot: null, anCache: {}, restoring: false, touched: false
+  hintStage: 0, hintMove: null, revealed: {}, whyNot: null, anCache: {}, restoring: false, touched: false, goal: null
 };
 var uciLog = [];          // moves of the current game as uci strings
 
@@ -396,6 +399,7 @@ function render() {
   }
   renderStatus(); renderMoves(); nudgeLabel();
   $('btn-whynot').textContent = W ? 'Back to the game' : 'Why not another move?';
+  updateGoal();
   var n = S.game.history().length, at = W ? W.k : n;
   $('nav-back').disabled = at === 0;
   $('nav-start').disabled = !W || S.mode === 'online';
@@ -703,6 +707,69 @@ function showFeedback(fb) {
   if (fb.after) { $('coach-after').hidden = false; $('coach-after').textContent = fb.after; }
   $('btn-takeback').hidden = !fb.canTakeBack;
   $('btn-explain').hidden = !sampleFn;
+}
+
+/* ---------- coach: the goal for this turn ---------- */
+// What the side to move should be trying to do, without naming the move.
+function turnGoal(fen, an) {
+  var c = new Chess(fen), me = c.turn(), best = an.moves[0]; if (!best) return '';
+  var bm = tryMove(fen, best.uci); if (!bm) return '';
+  var m = bm.move, home = me === 'w' ? '1' : '8';
+  if (best.score >= MATE - 1) return 'Checkmate is available in one move. Find it.';
+  if (best.score >= MATE - 50) return 'You can force checkmate. Look at your checks first.';
+  if (c.isCheck()) return 'You are in check. Make your king safe: move it, block the check, or capture the checking piece.';
+  var passed = flipTurn(c);
+  if (passed) {
+    var mates = passed.moves().filter(function (x) { return x.slice(-1) === '#'; });
+    if (mates.length) return 'Stop checkmate. Your opponent threatens ' + mates[0] + ' next move.';
+  }
+  if (m.captured && justLostAt(fen, m.to)) return 'Take back. Your opponent just captured on ' + m.to + ', and you can recapture there.';
+  var free = m.captured && !(best.reply && best.reply.slice(2, 4) === m.to);
+  if (free) return 'Win material. Your opponent has left a ' + NAME[m.captured] + ' unprotected. Find it and take it.';
+  if (m.captured && VAL[m.captured] > VAL[m.piece]) return 'Win material. You can capture a more valuable piece with a less valuable one.';
+  var loose = [];
+  c.board().forEach(function (row) { row.forEach(function (p) { if (p && p.color === me && p.type !== 'k' && isHanging(c, p.square)) loose.push(p); }); });
+  loose.sort(function (a, b) { return VAL[b.type] - VAL[a.type]; });
+  if (loose.length) return 'Keep your pieces safe. Your ' + NAME[loose[0].type] + ' on ' + loose[0].square + ' can be captured. Move it, defend it, or remove the attacker.';
+  var cap = function (x) { return clamp(x, -1500, 1500); };
+  var castleOk = an.moves.some(function (x) {
+    if (cap(best.score) - cap(x.score) > 20) return false;
+    var t = tryMove(fen, x.uci); return !!t && (t.move.flags.indexOf('k') >= 0 || t.move.flags.indexOf('q') >= 0);
+  });
+  if (castleOk) return 'Make your king safe. You can castle this turn.';
+  var centerPawn = ['d4', 'e4', 'd5', 'e5'].some(function (q) { var x = c.get(q); return x && x.type === 'p' && x.color === me; });
+  if (c.moveNumber() <= 3 && !centerPawn) return 'Start by taking the center. Put a pawn on one of the four middle squares, or bring out a knight toward them.';
+  var back = 0;
+  c.board().forEach(function (row) { row.forEach(function (p) { if (p && p.color === me && (p.type === 'n' || p.type === 'b') && p.square[1] === home) back++; }); });
+  var develops = (m.piece === 'n' || m.piece === 'b') && m.from[1] === home;
+  if (c.moveNumber() <= 14 && back >= 1 && (develops || back >= 2))
+    return 'Get your pieces into play. ' + back + ' of your knights and bishops ' + (back === 1 ? 'is' : 'are') + ' still on the back row.';
+  if (m.captured) return 'A fair trade is on offer. Decide whether exchanging pieces helps you.';
+  var d = describe(fen, best.uci, best.reply), has = function (start) { return d.some(function (x) { return x.indexOf(start) === 0; }); };
+  if (has('attacks the') || has('puts the king in check') || has('threatens checkmate')) return 'Make a threat. Look for a move that attacks one of your opponent\'s pieces or their king.';
+  if (has('pushes a pawn that no enemy pawn can stop')) return 'Advance your free pawn. No enemy pawn can stop it, so push it toward the last row.';
+  var queens = 0, bigMine = 0;
+  c.board().forEach(function (row) { row.forEach(function (p) { if (!p) return; if (p.type === 'q') queens++; if (p.color === me && p.type !== 'k' && p.type !== 'p') bigMine += VAL[p.type]; }); });
+  if (!queens && bigMine <= 8) return 'This is an endgame. Bring your king toward the action and push your pawns forward.';
+  if (has('protects the') || has('adds a defender')) return 'Tighten your defense. One of your pieces needs more protection.';
+  if (has('opens a line') || has('gives the') || has('puts the rook') || has('connects the rooks') || has('aims the'))
+    return 'Improve a piece. Find the one with the least room to move and give it a better square.';
+  return 'Nothing is under attack. Use the turn to give a piece more room or add a defender.';
+}
+function updateGoal() {
+  var el = $('goal'), txt = $('goal-text');
+  if (!S.coachOn || S.whyNot || S.game.isGameOver() || (S.mode === 'online' && !online.joined)) { el.hidden = true; return; }
+  el.hidden = false;
+  if (!canMoveNow() && !S.promo) { txt.textContent = 'Waiting for the other side to move.'; return; }
+  var fen = S.game.fen();
+  if (S.goal && S.goal.fen === fen) { txt.textContent = S.goal.text || 'Working it out.'; return; }
+  var g = S.goal = { fen: fen, text: '' };
+  txt.textContent = 'Working it out.';
+  ensurePre().promise.then(function (an) {
+    if (S.goal !== g) return;
+    g.text = turnGoal(fen, an) || 'Nothing is under attack. Use the turn to give a piece more room or add a defender.';
+    if (S.game.fen() === fen && !S.whyNot && canMoveNow()) txt.textContent = g.text;
+  });
 }
 
 /* ---------- coach: hints ---------- */
@@ -1397,7 +1464,7 @@ $('btn-new').addEventListener('click', function () { if (S.mode === 'cpu') newCp
 $('level').addEventListener('input', function () { setLevel(parseFloat(this.value)); });
 $('auto').checked = S.auto; $('coach-on').checked = S.coachOn;
 $('auto').addEventListener('change', function () { S.auto = this.checked; store.set('auto', S.auto); });
-$('coach-on').addEventListener('change', function () { S.coachOn = this.checked; store.set('coachOn', S.coachOn); });
+$('coach-on').addEventListener('change', function () { S.coachOn = this.checked; store.set('coachOn', S.coachOn); updateGoal(); });
 function seg(id, cb) {
   $(id).addEventListener('click', function (ev) {
     var b = ev.target.closest('button'); if (!b) return;
