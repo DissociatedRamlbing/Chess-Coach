@@ -64,7 +64,7 @@ h1 { font-family: var(--font-display); font-weight: 800; font-size: 1.6rem; marg
   border-radius: 8px; overflow: hidden; border: 2px solid var(--ink); user-select: none; -webkit-user-select: none; touch-action: manipulation; }
 .sq { position: relative; border: 0; padding: 0; margin: 0; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 0;
   font-family: var(--font-piece); font-size: calc(var(--board-w) / 8 * 0.78); line-height: 1; -webkit-tap-highlight-color: transparent; }
-.goal { margin: 0; padding: 7px 10px; min-height: 3.5em; font-size: 0.92rem; line-height: 1.35; background: var(--accent-soft); border-left: 4px solid var(--accent); border-radius: 6px; }
+.goal { margin: 0; padding: 7px 10px; min-height: 7.75em; font-size: 0.92rem; line-height: 1.35; background: var(--accent-soft); border-left: 4px solid var(--accent); border-radius: 6px; }
 .goal b { color: var(--accent); }
 .board.rewind { outline: 4px dashed var(--accent); outline-offset: 3px; }
 .sq.l { background: var(--board-light); } .sq.d { background: var(--board-dark); }
@@ -231,7 +231,7 @@ var GLYPH = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
 var NAME = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
 var VAL = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
 var MATE = 100000;
-var BUILD = 'b19';   // raise by one with every release
+var BUILD = 'b20';   // raise by one with every release
 
 /* ---------- small helpers ---------- */
 var store = {
@@ -711,53 +711,98 @@ function showFeedback(fb) {
 
 /* ---------- coach: the goal for this turn ---------- */
 // What the side to move should be trying to do, without naming the move.
+// Returns {k: kind of goal, lead: the goal in one sentence, text: lead plus the detail}.
 function turnGoal(fen, an) {
-  var c = new Chess(fen), me = c.turn(), best = an.moves[0]; if (!best) return '';
-  var bm = tryMove(fen, best.uci); if (!bm) return '';
+  var c = new Chess(fen), me = c.turn(), them = other(me), best = an.moves[0]; if (!best) return null;
+  var bm = tryMove(fen, best.uci); if (!bm) return null;
   var m = bm.move, home = me === 'w' ? '1' : '8';
-  if (best.score >= MATE - 1) return 'Checkmate is available in one move. Find it.';
-  if (best.score >= MATE - 50) return 'You can force checkmate. Look at your checks first.';
-  if (c.isCheck()) return 'You are in check. Make your king safe: move it, block the check, or capture the checking piece.';
+  var G = function (k, lead, more) { return { k: k, lead: lead, text: lead + (more ? ' ' + more : '') }; };
+  var bal = materialOf(c, me) - materialOf(c, them), balTxt = 'In material you are ' + balanceWords(bal) + '.';
+  var named = function (sq) { var p = c.get(sq); return 'the ' + NAME[p.type] + ' on ' + sq; };
+  var cheapest = function (sq, color) {
+    var a = c.attackers(sq, color); if (!a.length) return null;
+    a.sort(function (x, y) { return VAL[c.get(x).type] - VAL[c.get(y).type]; }); return a[0];
+  };
+  var pts = function (n) { return n + (n === 1 ? ' point' : ' points'); };
+  if (best.score >= MATE - 1) return G('mate', 'Checkmate is available in one move. Find it.', 'Look at every check you can give, and ask whether the king would have any way out.');
+  if (best.score >= MATE - 50) return G('mate', 'You can force checkmate.', 'Start with checks. Each one should leave the king fewer squares to run to.');
+  if (c.isCheck()) {
+    var ksq = null; c.board().forEach(function (row) { row.forEach(function (p) { if (p && p.type === 'k' && p.color === me) ksq = p.square; }); });
+    var chk = ksq ? cheapest(ksq, them) : null;
+    return G('check', 'You are in check' + (chk ? ' from ' + named(chk) : '') + '.', 'You must answer it now: move the king, block the line, or capture the checking piece.');
+  }
   var passed = flipTurn(c);
   if (passed) {
     var mates = passed.moves().filter(function (x) { return x.slice(-1) === '#'; });
-    if (mates.length) return 'Stop checkmate. Your opponent threatens ' + mates[0] + ' next move.';
+    if (mates.length) return G('stopmate', 'Stop checkmate. Your opponent threatens ' + mates[0] + ' next move.', 'Guard the square it lands on, block its path, or give your king a square to run to.');
   }
-  if (m.captured && justLostAt(fen, m.to)) return 'Take back. Your opponent just captured on ' + m.to + ', and you can recapture there.';
+  var lost = m.captured ? justLostAt(fen, m.to) : null;
+  if (lost) return G('win', 'Take back on ' + m.to + '.', 'Your opponent just captured your ' + NAME[lost] + ' there. If you do not recapture, you stay ' + pts(VAL[lost]) + ' down.');
   var free = m.captured && !(best.reply && best.reply.slice(2, 4) === m.to);
-  if (free) return 'Win material. Your opponent has left a ' + NAME[m.captured] + ' unprotected. Find it and take it.';
-  if (m.captured && VAL[m.captured] > VAL[m.piece]) return 'Win material. You can capture a more valuable piece with a less valuable one.';
+  if (free) return G('win', 'Win material. Your opponent has left a ' + NAME[m.captured] + ' unprotected.', 'Check each enemy ' + NAME[m.captured] + ': does one of your pieces attack it while nothing defends it? Take that one.');
+  if (m.captured && VAL[m.captured] > VAL[m.piece]) return G('win', 'Win material. You can capture a more valuable piece with a less valuable one.', 'Even if they take back, you come out ahead. Pawn 1, knight or bishop 3, rook 5, queen 9.');
   var loose = [];
   c.board().forEach(function (row) { row.forEach(function (p) { if (p && p.color === me && p.type !== 'k' && isHanging(c, p.square)) loose.push(p); }); });
   loose.sort(function (a, b) { return VAL[b.type] - VAL[a.type]; });
-  if (loose.length) return 'Keep your pieces safe. Your ' + NAME[loose[0].type] + ' on ' + loose[0].square + ' can be captured. Move it, defend it, or remove the attacker.';
+  if (loose.length) {
+    var L = loose[0], att = cheapest(L.square, them), defended = c.attackers(L.square, me).length > 0;
+    var nowAt = m.from === L.square ? m.to : L.square, stillThere = bm.chess.get(nowAt);
+    var savedByBest = !!stillThere && stillThere.color === me && !isHanging(bm.chess, nowAt);
+    var why = att ? named(att).replace(/^t/, 'T') + ' attacks it, and ' + (defended ? 'that attacker is worth less than your ' + NAME[L.type] : 'nothing defends it') + '.' : '';
+    if (savedByBest) return G('safe', 'Keep your pieces safe. Your ' + NAME[L.type] + ' on ' + L.square + ' can be captured.', why + ' Move it, defend it, block the attack, or capture the attacker.');
+    return G('counter', 'Your ' + NAME[L.type] + ' on ' + L.square + ' is under attack, but there is something stronger than saving it.', 'Look for a bigger threat of your own: a check, or an attack on a more valuable piece.');
+  }
   var cap = function (x) { return clamp(x, -1500, 1500); };
   var castleOk = an.moves.some(function (x) {
-    if (cap(best.score) - cap(x.score) > 20) return false;
+    if (cap(best.score) - cap(x.score) > 10) return false;
     var t = tryMove(fen, x.uci); return !!t && (t.move.flags.indexOf('k') >= 0 || t.move.flags.indexOf('q') >= 0);
   });
-  if (castleOk) return 'Make your king safe. You can castle this turn.';
+  if (castleOk) return G('castle', 'Make your king safe. You can castle this turn.', 'Castling puts the king behind a wall of pawns and brings a rook toward the middle, where it is more useful.');
   var centerPawn = ['d4', 'e4', 'd5', 'e5'].some(function (q) { var x = c.get(q); return x && x.type === 'p' && x.color === me; });
-  if (c.moveNumber() <= 3 && !centerPawn) return 'Start by taking the center. Put a pawn on one of the four middle squares, or bring out a knight toward them.';
-  var backN = 0, backB = 0;
-  c.board().forEach(function (row) { row.forEach(function (p) { if (p && p.color === me && p.square[1] === home) { if (p.type === 'n') backN++; else if (p.type === 'b') backB++; } }); });
+  if (c.moveNumber() <= 3 && !centerPawn) return G('center', 'Start by taking the center.', 'Put a pawn on ' + (me === 'w' ? 'e4 or d4' : 'e5 or d5') + ', or bring a knight toward the middle. Pieces in the center reach more of the board.');
+  var backN = 0, backB = 0, nSq = [], bSq = [];
+  c.board().forEach(function (row) { row.forEach(function (p) {
+    if (p && p.color === me && p.square[1] === home && (p.type === 'n' || p.type === 'b')) { if (p.type === 'n') { backN++; nSq.push(p.square); } else { backB++; bSq.push(p.square); } }
+  }); });
   var back = backN + backB, backList = [];
   if (backN) backList.push(backN + (backN === 1 ? ' knight' : ' knights'));
   if (backB) backList.push(backB + (backB === 1 ? ' bishop' : ' bishops'));
   var develops = (m.piece === 'n' || m.piece === 'b') && m.from[1] === home;
   if (c.moveNumber() <= 14 && back >= 1 && (develops || back >= 2))
-    return 'Get your pieces into play. You still have ' + backList.join(' and ') + ' on the back row.';
-  if (m.captured) return 'A fair trade is on offer. Decide whether exchanging pieces helps you.';
-  var d = describe(fen, best.uci, best.reply), has = function (start) { return d.some(function (x) { return x.indexOf(start) === 0; }); };
-  if (has('attacks the') || has('puts the king in check') || has('threatens checkmate')) return 'Make a threat. Look for a move that attacks one of your opponent\'s pieces or their king.';
-  if (has('pushes a pawn that no enemy pawn can stop')) return 'Advance your free pawn. No enemy pawn can stop it, so push it toward the last row.';
+    return G('dev', 'Get your pieces into play. You still have ' + backList.join(' and ') + ' on the back row.',
+      (back === 1 ? 'It reaches' : 'They reach') + ' very few squares from ' + listSquares(nSq.concat(bSq)) + '. Aim ' + (back === 1 ? 'it' : 'them') + ' toward the center, then castle.');
+  if (m.captured) return G('trade', 'A fair trade is on offer.', balTxt + ' Trading pieces helps the side that is ahead and hurts the side that is behind.');
+  var d = describe(fen, best.uci, best.reply), find = function (re) { for (var i = 0; i < d.length; i++) { var x = re.exec(d[i]); if (x) return x; } return null; };
+  var atk = find(/^attacks the (\w+) on/);
+  if (atk) return G('threat', 'Make a threat. One of your opponent\'s ' + atk[1] + 's can be attacked.', 'A threat forces them to respond, which gains you a turn. Check that your attacking piece is safe where it lands.');
+  if (find(/^puts the king in check/) || find(/^threatens checkmate/)) return G('threat', 'Make a threat against the king.', 'Look for a safe check, or a move that sets up checkmate next turn. Your opponent will have to deal with it.');
+  if (find(/^pushes a pawn that no enemy pawn can stop/)) return G('pawn', 'Advance your free pawn.', 'No enemy pawn can stop it. Push it toward the last row, where it becomes a queen, and keep it protected on the way.');
   var queens = 0, bigMine = 0;
   c.board().forEach(function (row) { row.forEach(function (p) { if (!p) return; if (p.type === 'q') queens++; if (p.color === me && p.type !== 'k' && p.type !== 'p') bigMine += VAL[p.type]; }); });
-  if (!queens && bigMine <= 8) return 'This is an endgame. Bring your king toward the action and push your pawns forward.';
-  if (has('protects the') || has('adds a defender')) return 'Tighten your defense. One of your pieces needs more protection.';
-  if (has('opens a line') || has('gives the') || has('puts the rook') || has('connects the rooks') || has('aims the'))
-    return 'Improve a piece. Find the one with the least room to move and give it a better square.';
-  return 'Nothing is under attack. Use the turn to give a piece more room or add a defender.';
+  if (!queens && bigMine <= 8) return G('endgame', 'This is an endgame.', balTxt + ' Bring your king toward the middle and push your pawns. With the queens gone, the king is a strong piece.');
+  var def = find(/^(?:protects|adds a defender to) the (\w+) on ([a-h][1-8])/);
+  if (def) {
+    var na = c.attackers(def[2], them).length, nd = c.attackers(def[2], me).length;
+    return G('defend', 'Tighten your defense. Your ' + def[1] + ' on ' + def[2] + ' needs more protection.', 'It is attacked by ' + na + (na === 1 ? ' piece' : ' pieces') + ' and defended by ' + nd + '. Add a defender, or move it somewhere safer.');
+  }
+  var worst = null;
+  c.board().forEach(function (row) { row.forEach(function (p) {
+    if (!p || p.color !== me || 'nbrq'.indexOf(p.type) < 0) return;
+    var n = c.moves({ square: p.square }).length;
+    if (!worst || n < worst.n) worst = { p: p, n: n };
+  }); });
+  if (worst && worst.n <= 4) return G('improve', 'Improve a piece.', 'Your ' + NAME[worst.p.type] + ' on ' + worst.p.square + ' has ' + (worst.n === 0 ? 'no squares' : 'only ' + worst.n + (worst.n === 1 ? ' square' : ' squares')) + ' to move to. Find a way to give it more room.');
+  return G('quiet', 'Nothing is under attack.', balTxt + ' Use the turn to give a piece more room or add a defender.');
+}
+// Whether a move is the kind of move the goal asks for.
+function fitsGoal(k, mv, d) {
+  var home = mv.color === 'w' ? '1' : '8', has = function (re) { return d.some(function (x) { return re.test(x); }); };
+  if (k === 'dev') return (mv.piece === 'n' || mv.piece === 'b') && mv.from[1] === home;
+  if (k === 'castle') return mv.flags.indexOf('k') >= 0 || mv.flags.indexOf('q') >= 0;
+  if (k === 'center') return (mv.piece === 'p' && ['d4', 'e4', 'd5', 'e5'].indexOf(mv.to) >= 0) || mv.piece === 'n';
+  if (k === 'threat') return has(/^attacks the|^puts the king in check|^threatens checkmate/);
+  if (k === 'improve' || k === 'quiet' || k === 'defend') return false;
+  return true;
 }
 function updateGoal() {
   var el = $('goal'), txt = $('goal-text');
@@ -770,7 +815,8 @@ function updateGoal() {
   txt.textContent = 'Working it out.';
   ensurePre().promise.then(function (an) {
     if (S.goal !== g) return;
-    g.text = turnGoal(fen, an) || 'Nothing is under attack. Use the turn to give a piece more room or add a defender.';
+    var tg = turnGoal(fen, an) || { k: 'quiet', lead: 'Nothing is under attack.', text: 'Nothing is under attack. Use the turn to give a piece more room or add a defender.' };
+    g.text = tg.text; g.k = tg.k; g.lead = tg.lead;
     if (S.game.fen() === fen && !S.whyNot && canMoveNow()) txt.textContent = g.text;
   });
 }
@@ -778,7 +824,7 @@ function updateGoal() {
 /* ---------- coach: hints ---------- */
 // The coach suggests the engine's best move. Only moves the verdict would also call "Best"
 // (within 10 points of the top score) can stand in for it, and among those the easiest to explain wins.
-function pickCoachMove(fen, an) {
+function pickCoachMove(fen, an, goalKind) {
   var best = an.moves[0], tol = 10, pick = best, top = -1;
   an.moves.forEach(function (m) {
     if (best.score - m.score > tol && m.uci !== best.uci) return;
@@ -786,6 +832,7 @@ function pickCoachMove(fen, an) {
     var r = tryMove(fen, m.uci); if (!r) return;
     var d = describe(fen, m.uci, m.reply), simple = d.length * 2 + (r.move.captured ? 2 : 0) - (best.score - m.score) / 40;
     if (r.chess.isCheckmate()) simple += 100;
+    if (goalKind && ['dev', 'castle', 'center', 'threat'].indexOf(goalKind) >= 0 && fitsGoal(goalKind, r.move, d)) simple += 50;
     if (simple > top) { top = simple; pick = m; }
   });
   return pick;
@@ -802,13 +849,17 @@ function onHint() {
   if (S.hintStage === 0) showCoach('Thinking', 'One moment.');
   pre.promise.then(function (an) {
     if (S.game.fen() !== fen || !an.moves.length) return;
-    var mv = S.hintMove && S.hintMove.fen === fen ? S.hintMove.mv : pickCoachMove(fen, an);
+    var mv = S.hintMove && S.hintMove.fen === fen ? S.hintMove.mv : pickCoachMove(fen, an, S.goal && S.goal.fen === fen ? S.goal.k : null);
     S.hintMove = { fen: fen, mv: mv };
     var r = tryMove(fen, mv.uci); if (!r) return;
     $('btn-takeback').hidden = true; $('btn-explain').hidden = true;
     if (S.hintStage === 0) {
       S.hintStage = 1; S.hintSquares = [r.move.from];
-      showCoach('Nudge', 'Look at your ' + NAME[r.move.piece] + ' on ' + r.move.from + '. Where could it do the most good?', 'Tap again to see the move.');
+      var gl = S.goal && S.goal.fen === fen && S.goal.lead ? S.goal : null, look = 'Look at your ' + NAME[r.move.piece] + ' on ' + r.move.from + '.';
+      var lead = !gl ? look + ' Where could it do the most good?'
+        : fitsGoal(gl.k, r.move, describe(fen, mv.uci, mv.reply)) ? 'This turn\'s goal: ' + gl.lead + ' ' + look + ' How can it do that?'
+        : look + ' The strongest move this turn is a different idea from the general goal. Where could it do the most good?';
+      showCoach('Nudge', lead, 'Tap again to see the move.');
       $('btn-hint').textContent = 'Show the move';
     } else {
       S.hintStage = 2; S.hintSquares = [r.move.from, r.move.to]; S.revealed[fen + '|' + mv.uci] = true;
