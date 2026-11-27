@@ -56,15 +56,15 @@ h1 { font-family: var(--font-display); font-weight: 800; font-size: 1.6rem; marg
 @media (min-width: 880px) { .main { grid-template-columns: auto 1fr; align-items: start; gap: 20px; } }
 .boardcol { display: flex; flex-direction: column; gap: 8px; width: var(--board-w); max-width: 100%; margin: 0 auto; }
 .status { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 700; min-height: 1.6em; }
-.status .turn { display: flex; align-items: center; gap: 8px; }
+.status .turn { display: flex; align-items: center; gap: 8px; flex: none; white-space: nowrap; }
 .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--ink); flex: none; }
 .dot.w { background: #fff; } .dot.b { background: #1b2533; border-color: var(--muted); }
-.status .sub { color: var(--muted); font-weight: 400; font-size: 0.9rem; text-align: right; }
+.status .sub { color: var(--muted); font-weight: 400; font-size: 0.9rem; text-align: right; flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .board { position: relative; width: var(--board-w); height: var(--board-w); display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr);
   border-radius: 8px; overflow: hidden; border: 2px solid var(--ink); user-select: none; -webkit-user-select: none; touch-action: manipulation; }
 .sq { position: relative; border: 0; padding: 0; margin: 0; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 0;
   font-family: var(--font-piece); font-size: calc(var(--board-w) / 8 * 0.78); line-height: 1; -webkit-tap-highlight-color: transparent; }
-.goal { margin: 0; padding: 7px 10px; min-height: 7.75em; font-size: 0.92rem; line-height: 1.35; background: var(--accent-soft); border-left: 4px solid var(--accent); border-radius: 6px; }
+.goal { margin: 0; padding: 7px 10px; font-size: 0.92rem; line-height: 1.35; background: var(--accent-soft); border-left: 4px solid var(--accent); border-radius: 6px; }
 .goal b { color: var(--accent); }
 .board.rewind { outline: 4px dashed var(--accent); outline-offset: 3px; }
 .sq.l { background: var(--board-light); } .sq.d { background: var(--board-dark); }
@@ -144,7 +144,6 @@ input.code { border: 1.5px solid var(--ink); background: var(--surface); border-
         <div class="turn"><span class="dot w" id="turn-dot"></span><span id="turn-text">White to move</span></div>
         <div class="sub" id="status-sub"></div>
       </div>
-      <p class="goal" id="goal" aria-live="polite" hidden><b>Goal this turn:</b> <span id="goal-text"></span></p>
       <div class="board" id="board" aria-label="Chess board"></div>
       <div class="nav" role="group" aria-label="Step through the game">
         <button class="btn" id="nav-start">Start here</button>
@@ -152,6 +151,7 @@ input.code { border: 1.5px solid var(--ink); background: var(--surface); border-
         <button class="btn" id="nav-fwd">Forward ▶</button>
         <button class="btn" id="nav-live">Live</button>
       </div>
+      <p class="goal" id="goal" aria-live="polite" hidden><b>Goal this turn:</b> <span id="goal-text"></span></p>
       <p class="moves" id="moves" aria-label="Moves so far"></p>
     </div>
 
@@ -231,7 +231,7 @@ var GLYPH = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
 var NAME = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
 var VAL = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
 var MATE = 100000;
-var BUILD = 'b20';   // raise by one with every release
+var BUILD = 'b21';   // raise by one with every release
 
 /* ---------- small helpers ---------- */
 var store = {
