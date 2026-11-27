@@ -231,7 +231,7 @@ var GLYPH = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
 var NAME = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
 var VAL = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
 var MATE = 100000;
-var BUILD = 'b18';   // raise by one with every release
+var BUILD = 'b19';   // raise by one with every release
 
 /* ---------- small helpers ---------- */
 var store = {
@@ -739,11 +739,14 @@ function turnGoal(fen, an) {
   if (castleOk) return 'Make your king safe. You can castle this turn.';
   var centerPawn = ['d4', 'e4', 'd5', 'e5'].some(function (q) { var x = c.get(q); return x && x.type === 'p' && x.color === me; });
   if (c.moveNumber() <= 3 && !centerPawn) return 'Start by taking the center. Put a pawn on one of the four middle squares, or bring out a knight toward them.';
-  var back = 0;
-  c.board().forEach(function (row) { row.forEach(function (p) { if (p && p.color === me && (p.type === 'n' || p.type === 'b') && p.square[1] === home) back++; }); });
+  var backN = 0, backB = 0;
+  c.board().forEach(function (row) { row.forEach(function (p) { if (p && p.color === me && p.square[1] === home) { if (p.type === 'n') backN++; else if (p.type === 'b') backB++; } }); });
+  var back = backN + backB, backList = [];
+  if (backN) backList.push(backN + (backN === 1 ? ' knight' : ' knights'));
+  if (backB) backList.push(backB + (backB === 1 ? ' bishop' : ' bishops'));
   var develops = (m.piece === 'n' || m.piece === 'b') && m.from[1] === home;
   if (c.moveNumber() <= 14 && back >= 1 && (develops || back >= 2))
-    return 'Get your pieces into play. ' + back + ' of your knights and bishops ' + (back === 1 ? 'is' : 'are') + ' still on the back row.';
+    return 'Get your pieces into play. You still have ' + backList.join(' and ') + ' on the back row.';
   if (m.captured) return 'A fair trade is on offer. Decide whether exchanging pieces helps you.';
   var d = describe(fen, best.uci, best.reply), has = function (start) { return d.some(function (x) { return x.indexOf(start) === 0; }); };
   if (has('attacks the') || has('puts the king in check') || has('threatens checkmate')) return 'Make a threat. Look for a move that attacks one of your opponent\'s pieces or their king.';
